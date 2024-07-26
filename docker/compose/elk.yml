@@ -1,0 +1,158 @@
+version: '3.7'
+
+services:
+  setup:
+    image: elk_setup:${ELASTIC_VERSION}
+    init: true
+    deploy:
+      mode: global
+      endpoint_mode: dnsrr
+      placement:
+        constraints:
+        - node.role==manager
+      resources:
+        limits:
+          memory: 4G
+      restart_policy:
+        condition: none
+    volumes:
+      - setup:/state:Z
+      - ${ROOT}/docker/config/setup/entrypoint.sh:/entrypoint.sh:ro,Z
+      - ${ROOT}/docker/config/setup/lib.sh:/lib.sh:ro,Z
+      - ${ROOT}/docker/config/setup/roles:/roles:ro,Z
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
+      LOGSTASH_INTERNAL_PASSWORD: ${LOGSTASH_INTERNAL_PASSWORD:-}
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-}
+      FILEBEAT_INTERNAL_PASSWORD: ${FILEBEAT_INTERNAL_PASSWORD:-}
+      BEATS_SYSTEM_PASSWORD: ${BEATS_SYSTEM_PASSWORD:-}
+    networks:
+      - codetrekking
+    depends_on:
+      - elasticsearch
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION}
+    restart: always
+    deploy:
+      mode: global
+      placement:
+        constraints:
+        - node.role==manager
+      resources:
+        limits:
+          memory: 8G
+      restart_policy:
+        condition: none
+    volumes:
+      - ${DOCKER_DIR}/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro,z
+      - ${ROOT}/storage/elasticsearch:/usr/share/elasticsearch/data:z
+      - ${ROOT}/storage/elasticsearch_plugins:/usr/share/elasticsearch/plugins
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
+      discovery.type: single-node
+    networks:
+      - codetrekking
+  
+  logstash:
+    image: docker.elastic.co/logstash/logstash:${ELASTIC_VERSION}
+    restart: always
+    deploy:
+      mode: global
+      placement:
+        constraints:
+        - node.role==manager
+      resources:
+        limits:
+          memory: 4G
+      restart_policy:
+        condition: none
+    volumes:
+      - ${DOCKER_DIR}/config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro,Z
+      - ${DOCKER_DIR}/config/logstash/pipeline:/usr/share/logstash/pipeline:ro,Z
+    ports:
+      - "5044:5044"
+      - "5000:5000/tcp"
+      - "5000:5000/udp"
+      - "12201:12201/udp"
+      - "9600:9600"
+    environment:
+      LS_JAVA_OPTS: -Xms256m -Xmx256m
+      LOGSTASH_INTERNAL_PASSWORD: ${LOGSTASH_INTERNAL_PASSWORD}
+    networks:
+      - codetrekking
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION}
+    restart: always
+    deploy:
+      mode: global
+      placement:
+        constraints:
+        - node.role==manager
+      resources:
+        limits:
+          memory: 4G
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - ${DOCKER_DIR}/config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro,Z
+    ports:
+      - "5601:5601"
+    environment:
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-}
+    networks:
+      - codetrekking
+    depends_on:
+      - elasticsearch
+
+  filebeat:
+    user: root
+    container_name: filebeat
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION}
+    depends_on:
+      - logstash
+    volumes:
+      - ${ROOT}/storage/elasticsearch_filebeat:/usr/share/filebeat/mylog
+      - ${DOCKER_DIR}/config/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro,Z
+      - type: bind
+        source: /var/lib/docker/containers
+        target: /var/lib/docker/containers
+        read_only: true
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+    command: ["--strict.perms=false"]
+    environment:
+      FILEBEAT_INTERNAL_PASSWORD: ${FILEBEAT_INTERNAL_PASSWORD:-}
+      BEATS_SYSTEM_PASSWORD: ${BEATS_SYSTEM_PASSWORD:-}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    stdin_open: true
+    tty: true
+    networks:
+      - codetrekking
+    deploy:
+      mode: global
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "50"
+
+networks:
+  codetrekking: 
+    driver: overlay
+    attachable: true
+
+volumes:
+  setup:
