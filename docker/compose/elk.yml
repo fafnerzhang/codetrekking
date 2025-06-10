@@ -12,7 +12,7 @@ services:
         - node.role==manager
       resources:
         limits:
-          memory: 4G
+          memory: 2G
       restart_policy:
         condition: none
     volumes:
@@ -42,17 +42,19 @@ services:
       resources:
         limits:
           memory: 8G
+        reservations:
+          memory: 4G
       restart_policy:
-        condition: none
+        condition: on-failure
     volumes:
       - ${DOCKER_DIR}/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro,z
       - ${ROOT}/storage/elasticsearch:/usr/share/elasticsearch/data:z
-      - ${ROOT}/storage/elasticsearch_plugins:/usr/share/elasticsearch/plugins
+      - ${ROOT}/storage/elasticsearch_plugins:/usr/share/elasticsearch/plugins:z
     ports:
       - "9200:9200"
       - "9300:9300"
     environment:
-      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
       ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
       discovery.type: single-node
     networks:
@@ -68,7 +70,7 @@ services:
         - node.role==manager
       resources:
         limits:
-          memory: 4G
+          memory: 2G
       restart_policy:
         condition: none
     volumes:
@@ -98,7 +100,7 @@ services:
         - node.role==manager
       resources:
         limits:
-          memory: 4G
+          memory: 2G
       restart_policy:
         condition: on-failure
     volumes:
@@ -116,6 +118,16 @@ services:
     user: root
     container_name: filebeat
     image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION}
+    deploy:
+      mode: global
+      placement:
+        constraints:
+        - node.role==manager
+      resources:
+        limits:
+          memory: 2G
+      restart_policy:
+        condition: none
     depends_on:
       - logstash
     volumes:

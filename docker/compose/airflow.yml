@@ -16,7 +16,7 @@ services:
       endpoint_mode: dnsrr
       placement:
         constraints:
-        - node.role==worker
+        - node.role==${AIRFLOW_NODE_ROLE:-worker}
       resources:
         limits:
           memory: 4G
@@ -37,7 +37,7 @@ services:
       endpoint_mode: dnsrr
       placement:
         constraints:
-        - node.role==worker
+        - node.role==${AIRFLOW_NODE_ROLE:-worker}
       resources:
         limits:
           memory: 4G
@@ -48,12 +48,8 @@ services:
       
   airflow-webserver:
     image: apache/airflow:${AIRFLOW_VERSION}
-    user: ${AIRFLOW_UID}:0
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+    user: "${AIRFLOW_UID}:0"
+    entrypoint: ["/bin/bash", "-c", "chown -R ${AIRFLOW_UID}:0 /opt/airflow/dags /opt/airflow/logs /opt/airflow/config /opt/airflow/plugins 2>/dev/null || true; exec airflow webserver"]
     depends_on:
       - postgres
       - redis
@@ -65,7 +61,7 @@ services:
       mode: global
       placement:
         constraints:
-        - node.role==worker
+        - node.role==${AIRFLOW_NODE_ROLE:-worker}
       restart_policy:
         condition: on-failure
     healthcheck:
@@ -76,21 +72,17 @@ services:
       start_period: 30s
     restart: always
     volumes:
-      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:Z
-      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:Z
-      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:Z
-      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:Z
+      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:rw
+      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:rw
+      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:rw
+      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:rw
     networks:
       - codetrekking
       
   airflow-scheduler:
     image: apache/airflow:${AIRFLOW_VERSION}
-    user: ${AIRFLOW_UID}:0
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+    user: "${AIRFLOW_UID}:0"
+    entrypoint: ["/bin/bash", "-c", "chown -R ${AIRFLOW_UID}:0 /opt/airflow/dags /opt/airflow/logs /opt/airflow/config /opt/airflow/plugins 2>/dev/null || true; exec airflow scheduler"]
     depends_on:
       - postgres
       - redis
@@ -101,25 +93,21 @@ services:
       endpoint_mode: dnsrr
       placement:
         constraints:
-        - node.role==worker
+        - node.role==${AIRFLOW_NODE_ROLE:-worker}
       restart_policy:
         condition: on-failure
     volumes:
-      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:Z
-      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:Z
-      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:Z
-      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:Z
+      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:rw
+      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:rw
+      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:rw
+      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:rw
     networks:
       - codetrekking
       
   airflow-worker:
     image: apache/airflow:${AIRFLOW_VERSION}
-    user: ${AIRFLOW_UID}:0
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+    user: "${AIRFLOW_UID}:0"
+    entrypoint: ["/bin/bash", "-c", "chown -R ${AIRFLOW_UID}:0 /opt/airflow/dags /opt/airflow/logs /opt/airflow/config /opt/airflow/plugins 2>/dev/null || true; exec airflow celery worker"]
     depends_on:
       - postgres
       - redis
@@ -130,25 +118,21 @@ services:
       endpoint_mode: dnsrr
       placement:
         constraints:
-        - node.role==worker
+        - node.role==${AIRFLOW_NODE_ROLE:-worker}
       restart_policy:
         condition: on-failure
     volumes:
-      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:Z
-      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:Z
-      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:Z
-      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:Z
+      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:rw
+      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:rw
+      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:rw
+      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:rw
     networks:
       - codetrekking
       
   airflow-triggerer:
     image: apache/airflow:${AIRFLOW_VERSION}
-    user: ${AIRFLOW_UID}:0
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+    user: "${AIRFLOW_UID}:0"
+    entrypoint: ["/bin/bash", "-c", "chown -R ${AIRFLOW_UID}:0 /opt/airflow/dags /opt/airflow/logs /opt/airflow/config /opt/airflow/plugins 2>/dev/null || true; exec airflow triggerer"]
     depends_on:
       - postgres
       - redis
@@ -159,25 +143,21 @@ services:
       endpoint_mode: dnsrr
       placement:
         constraints:
-        - node.role==worker
+        - node.role==${AIRFLOW_NODE_ROLE:-worker}
       restart_policy:
         condition: on-failure
     volumes:
-      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:Z
-      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:Z
-      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:Z
-      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:Z
+      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:rw
+      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:rw
+      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:rw
+      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:rw
     networks:
       - codetrekking
       
   airflow-init:
     image: apache/airflow:${AIRFLOW_VERSION}
-    user: ${AIRFLOW_UID}:0
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+    user: "${AIRFLOW_UID}:0"
+    command: bash -c "chown -R ${AIRFLOW_UID}:0 /opt/airflow/dags /opt/airflow/logs /opt/airflow/config /opt/airflow/plugins 2>/dev/null || true; airflow db init && airflow users create -u ${AIRFLOW_USER} -p ${AIRFLOW_PASSWORD} -f Admin -l User -r Admin -e ${AIRFLOW_EMAIL}"
     depends_on:
       - postgres
       - redis
@@ -186,47 +166,40 @@ services:
       endpoint_mode: dnsrr
       placement:
         constraints:
-        - node.role==worker
+        - node.role==${AIRFLOW_NODE_ROLE:-worker}
       restart_policy:
         condition: none
-    command: bash -c "airflow db init && airflow users create -u ${AIRFLOW_USER} -p ${AIRFLOW_PASSWORD} -f Admin -l User -r Admin -e ${AIRFLOW_EMAIL}"
     volumes:
-      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:Z
-      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:Z
-      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:Z
-      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:Z
+      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:rw
+      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:rw
+      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:rw
+      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:rw
     networks:
       - codetrekking
 
   airflow-cli:
     image: apache/airflow:${AIRFLOW_VERSION}
-    user: ${AIRFLOW_UID}:0
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${AIRFLOW_USER}:${AIRFLOW_POSTGRES_PASSWORD}@postgres/airflow
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - CONNECTION_CHECK_MAX_COUNT="0"
-    depends_on:
-      - postgres
-      - redis
+    user: "${AIRFLOW_UID}:0"
     command:
       - bash
       - -c
-      - airflow
+      - "chown -R ${AIRFLOW_UID}:0 /opt/airflow/dags /opt/airflow/logs /opt/airflow/config /opt/airflow/plugins 2>/dev/null || true; airflow"
+    depends_on:
+      - postgres
+      - redis
     deploy:
       mode: global
       endpoint_mode: dnsrr
       placement:
         constraints:
-        - node.role==worker
+        - node.role==${AIRFLOW_NODE_ROLE:-worker}
       restart_policy:
         condition: none
     volumes:
-      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:Z
-      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:Z
-      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:Z
-      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:Z
+      - ${AIRFLOW_PROJ_DIR}/dags:/opt/airflow/dags:rw
+      - ${AIRFLOW_PROJ_DIR}/logs:/opt/airflow/logs:rw
+      - ${AIRFLOW_PROJ_DIR}/config:/opt/airflow/config:rw
+      - ${AIRFLOW_PROJ_DIR}/plugins:/opt/airflow/plugins:rw
     networks:
       - codetrekking
 
