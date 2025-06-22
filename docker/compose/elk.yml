@@ -78,8 +78,8 @@ services:
       - ${DOCKER_DIR}/config/logstash/pipeline:/usr/share/logstash/pipeline:ro,Z
     ports:
       - "5044:5044"
-      - "5000:5000/tcp"
-      - "5000:5000/udp"
+      - "5001:5001/tcp"
+      - "5001:5001/udp"
       - "12201:12201/udp"
       - "9600:9600"
     environment:
@@ -163,8 +163,8 @@ services:
 
 networks:
   codetrekking: 
-    driver: overlay
-    attachable: true
+    external: true
+    name: codetrekking
 
 volumes:
   setup:

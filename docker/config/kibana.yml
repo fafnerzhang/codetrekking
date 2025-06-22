@@ -8,19 +8,22 @@ elasticsearch.hosts: [ "http://elasticsearch:9200" ]
 monitoring.ui.container.elasticsearch.enabled: true
 
 ## X-Pack security credentials
-#
+## Enable security authentication for Kibana
 elasticsearch.username: kibana_system
 elasticsearch.password: ${KIBANA_SYSTEM_PASSWORD}
 
-## Encryption keys (optional but highly recommended)
-##
+## Encryption keys (required for security features)
 ## Generate with either
-##  $ docker container run --rm docker.elastic.co/kibana/kibana:8.6.2 bin/kibana-encryption-keys generate
+##  $ docker container run --rm docker.elastic.co/kibana/kibana:9.0.1 bin/kibana-encryption-keys generate
 ##  $ openssl rand -hex 32
 ##
 ## https://www.elastic.co/guide/en/kibana/current/using-kibana-with-security.html
 ## https://www.elastic.co/guide/en/kibana/current/kibana-encryption-keys.html
 #
-xpack.encryptedSavedObjects.encryptionKey: facb4043fb9d14a459e5f3aae58976f0
-xpack.reporting.encryptionKey: 16f42e75ca41a82b1a1be03b134bede3
-xpack.security.encryptionKey: 0b1b31e17b16c0663ae5162f2fb8ad92
+# xpack.encryptedSavedObjects.encryptionKey: facb4043fb9d14a459e5f3aae58976f0
+# xpack.reporting.encryptionKey: 16f42e75ca41a82b1a1be03b134bede3
+# xpack.security.encryptionKey: 0b1b31e17b16c0663ae5162f2fb8ad92
+
+## Additional security configuration
+# xpack.security.session.idleTimeout: "1h"
+# xpack.security.session.lifespan: "30d"

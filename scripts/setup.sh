@@ -23,3 +23,23 @@ for DIR in $STORAGE_DIRS; do
   mkdir -p "$BASE_DIR/$DIR"
   echo "Created directory: $BASE_DIR/$DIR"
 done
+
+echo "Creating swarm overlay network: codetrekking"
+
+# Check if network already exists
+if docker network ls --format "table {{.Name}}" | grep -q "^codetrekking$"; then
+    echo "Network 'codetrekking' already exists"
+    docker network inspect codetrekking
+else
+    # Create overlay network for swarm
+    docker network create \
+        --driver overlay \
+        --attachable \
+        --scope swarm \
+        codetrekking
+    echo "Network 'codetrekking' created successfully"
+fi
+
+echo ""
+echo "Network is ready for swarm services!"
+echo "You can now deploy services that use this network."

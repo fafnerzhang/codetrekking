@@ -9,17 +9,17 @@ setup:  ## Run the setup script to initialize the environment
 	bash $(SCRIPTS_DIR)/setup.sh
 
 deploy-airflow:    ## Deploy Airflow using the deploy script
-	@echo "Running deploy_airflow.sh..."
-	cd scripts && bash deploy_airflow.sh
+	@echo "Running deploy/airflow.sh..."
+	cd scripts/deploy && bash airflow.sh
 
 deploy-elk:    ## Deploy Elasticsearch using the deploy script
-	@echo "Running deploy_elk.sh..."
-	cd scripts && bash deploy_elk.sh
+	@echo "Running deploy/elk.sh..."
+	cd scripts/deploy && bash elk.sh
 
 deploy-potainer:    ## Deploy Potainer using the deploy script
-	@echo "Running deploy_potainer.sh..."
-	cd scripts && bash deploy_potainer.sh
+	@echo "Running deploy/potainer.sh..."
+	cd scripts/deploy && bash potainer.sh
 
-entry:    ## Run the entry script to start the application
-	@echo "Running entry.sh..."
-	bash $(SCRIPTS_DIR)/entry.sh
+deploy-registry:
+	@echo "Running deploy/registry.sh..."
+	cd scripts/deploy && bash registry.sh
