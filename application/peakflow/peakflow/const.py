@@ -1,8 +1,14 @@
 import pathlib
+import os
 
 
 USER_HOME = pathlib.Path.home()
+ELASTICSEARCH_HOST = os.getenv('ELASTICSEARCH_HOST', 'http://elasticsearch:9200')
+ELASTICSEARCH_USER = os.getenv('ELASTICSEARCH_USER', 'elastic')
+ELASTICSEARCH_PASSWORD = os.getenv('ELASTICSEARCH_PASSWORD', 'change_me')
+
 DEFAULT_GARMIN_CONFIG_DIR = USER_HOME / 'storage' / 'garmin' / '{user}'
+
 DEFAULT_GARMIN_CONFIG = {
     "db": {
         "type"                          : "sqlite"

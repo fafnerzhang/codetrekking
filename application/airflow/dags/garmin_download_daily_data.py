@@ -1,4 +1,5 @@
 from airflow.sdk import DAG, task, Param
+from airflow.providers.standard.operators.trigger_dagrun import TriggerDagRunOperator
 from datetime import datetime, timedelta
 from peakflow.providers.garmin import GarminClient
 from peakflow.utils import build_garmin_config, get_garmin_config_dir
@@ -14,18 +15,11 @@ default_params = {
         title='Garmin Connect Username',
         description='Your Garmin Connect account username'
     ),
-    'password': Param(
-        default='example_password',
-        type='string',
-        title='Garmin Connect Password',
-        format='password',
-        description='Your Garmin Connect account password'
-    ),
     'days_to_download': Param(
         default=1,
         type='integer',
         minimum=1,
-        maximum=30,
+        maximum=720,
         title='Days to Download',
         description='Number of days of data to download'
     ),
@@ -55,31 +49,152 @@ with DAG(
     render_template_as_native_obj=True,  # Enable native object rendering for params
 ) as dag:
 
-    @task.python(task_id='download_garmin_daily_data')
-    def download_garmin_daily_data(**context):
+    @task.python(task_id='check_existing_activities')
+    def check_existing_activities(**context):
         """
-        Download Garmin daily data for specified user
+        檢查Elasticsearch中指定日期範圍內已存在的activity_id
         
         Args:
             **context: Airflow context containing params and execution info
             
         Returns:
-            dict: Status information about the download operation
+            dict: 包含existing activity_ids的狀態信息
         """
+        print("🔍 DEBUG: Starting check_existing_activities task")
+        print(f"🔍 DEBUG: Full context keys: {list(context.keys())}")
+        
         # Get parameters from context
         params = context.get('params', {})
+        print(f"🔍 DEBUG: Received params: {params}")
         user = params.get('user', 'example@gmail.com')
-        password = params.get('password', 'example_password')
+        days_to_download = params.get('days_to_download', 1)
+        
+        print(f"🔍 DEBUG: Parsed user: {user}")
+        print(f"🔍 DEBUG: Parsed days_to_download: {days_to_download}")
+        
+        # Calculate date range
+        from datetime import date
+        today = date.today()
+        start_date = today - timedelta(days=days_to_download)
+        end_date = today
+        
+        print(f"Checking existing activities for user: {user}")
+        print(f"Date range: {start_date} to {end_date}")
+        
+    
+        # Try connecting to Elasticsearch and query for existing activities
+        from peakflow.storage.elasticsearch import ElasticsearchStorage
+        from peakflow.storage.interface import DataType, QueryFilter
+        from peakflow.const import ELASTICSEARCH_HOST, ELASTICSEARCH_USER, ELASTICSEARCH_PASSWORD
+        # Initialize Elasticsearch storage
+        es_storage = ElasticsearchStorage()
+        # Load Elasticsearch config from Airflow Variables (recommended for Airflow)
+        from airflow.models import Variable
+        es_host = Variable.get('ELASTICSEARCH_HOST', default_var=ELASTICSEARCH_HOST)
+        es_user = Variable.get('ELASTICSEARCH_USERNAME', default_var=ELASTICSEARCH_USER)
+        es_pass = Variable.get('ELASTICSEARCH_PASSWORD', default_var=ELASTICSEARCH_PASSWORD)
+        es_config = {
+            'hosts': [es_host],
+            'username': es_user,
+            'password': es_pass,
+            'verify_certs': False
+        }
+
+        if not es_storage.initialize(es_config):
+            print("Warning: Could not connect to Elasticsearch, will proceed without checking")
+            return {
+                'status': 'elasticsearch_unavailable',
+                'existing_activity_ids': set(),
+                'user': user,
+                'start_date': str(start_date),
+                'end_date': str(end_date),
+                'message': 'Elasticsearch unavailable, proceeding without duplicate check'
+            }
+
+        # Build query to get activities within the specified date range
+        from datetime import datetime as dt
+        start_datetime = dt.combine(start_date, dt.min.time())
+        end_datetime = dt.combine(end_date, dt.max.time())
+
+        query_filter = QueryFilter()
+        query_filter.add_date_range('start_time', start=start_datetime, end=end_datetime)
+        query_filter.add_term_filter('user_id', user)  # If available
+        query_filter.limit = 10000  # Assume no more than 10,000 activities in this range
+
+        # Query SESSION type data (activity data is usually stored here)
+        existing_sessions = es_storage.search(DataType.SESSION, query_filter)
+
+        # Extract activity_ids
+        existing_activity_ids = set()
+        for session in existing_sessions:
+            activity_id = session.get('activity_id') or session.get('activityId')
+            if activity_id:
+                existing_activity_ids.add(str(activity_id))
+
+        print(f"Found {len(existing_activity_ids)} existing activities in Elasticsearch")
+        if existing_activity_ids:
+            print(f"Existing activity IDs: {list(existing_activity_ids)[:10]}...")  # Show only first 10
+
+        result = {
+            'status': 'success',
+            'existing_activity_ids': existing_activity_ids,
+            'user': user,
+            'start_date': str(start_date),
+            'end_date': str(end_date),
+            'total_existing': len(existing_activity_ids)
+        }
+        print(f"🔍 DEBUG: check_existing_activities returning result: {result}")
+        return result
+
+    @task.python(task_id='download_garmin_daily_data')
+    def download_garmin_daily_data(existing_activities_check, **context):
+        """
+        Download Garmin daily data for specified user, excluding existing activities
+        
+        Args:
+            existing_activities_check: Result from check_existing_activities task
+            **context: Airflow context containing params and execution info
+            
+        Returns:
+            dict: Status information about the download operation
+        """
+        print("📥 DEBUG: Starting download_garmin_daily_data task")
+        print(f"📥 DEBUG: Received existing_activities_check: {existing_activities_check}")
+        print(f"📥 DEBUG: existing_activities_check type: {type(existing_activities_check)}")
+        
+        # Get parameters from context
+        params = context.get('params', {})
+        print(f"📥 DEBUG: Received params: {params}")
+        user = params.get('user', 'example@gmail.com')
         days_to_download = params.get('days_to_download', 1)
         overwrite_existing = params.get('overwrite_existing', False)
         
+        print(f"📥 DEBUG: Parsed user: {user}")
+        print(f"📥 DEBUG: Parsed days_to_download: {days_to_download}")
+        print(f"📥 DEBUG: Parsed overwrite_existing: {overwrite_existing}")
+        
+        # Get existing activity IDs from previous task
+        existing_activity_ids = set()
+        if existing_activities_check and existing_activities_check.get('status') == 'success':
+            existing_activity_ids = existing_activities_check.get('existing_activity_ids', set())
+            print(f"Will exclude {len(existing_activity_ids)} existing activities from download")
+        else:
+            print(f"No existing activities check available or failed: {existing_activities_check.get('message', 'Unknown')}")
+        
         # Setup configuration directory
         default_config_dir = f'/opt/garmin/{user}'
-        build_garmin_config(user, password, default_config_dir)
         config_dir = get_garmin_config_dir(user, default_config_dir)
-        
-        # Initialize Garmin client
-        client = GarminClient(config_dir)
+
+        # Initialize Garmin client with better error handling
+        try:
+            client = GarminClient.create_safe_client(config_dir)
+        except Exception as e:
+            print(f"Failed to create Garmin client: {e}")
+            return {
+                'status': 'failed',
+                'error': str(e),
+                'user': user
+            }
         
         # Setup output directory
         output_directory = f"/opt/garmin/{user}"
@@ -97,13 +212,38 @@ with DAG(
         print(f"Output directory: {output_directory}")
         print(f"Overwrite existing: {overwrite_existing}")
         
-        # Download data and get returned FIT file paths
-        downloaded_fit_files = client.download_daily_data(
-            output_directory, 
-            start_date, 
-            days_to_download, 
-            overwrite_existing
-        )
+        # Download data and get returned result
+        try:
+            download_result = client.download_daily_data(
+                output_directory, 
+                start_date, 
+                days_to_download, 
+                overwrite_existing,
+                exclude_activity_ids=existing_activity_ids  # 傳入要排除的activity IDs
+            )
+            
+            # Handle new structured return format while maintaining backward compatibility
+            if isinstance(download_result, dict):
+                downloaded_fit_files = download_result.get('downloaded_fit_files', [])
+                file_details = download_result.get('file_details', [])
+                activity_ids = download_result.get('activity_ids', [])
+                download_summary = download_result.get('download_summary', {})
+            else:
+                # Legacy format: simple list of file paths
+                downloaded_fit_files = download_result if download_result else []
+                file_details = []
+                activity_ids = []
+                download_summary = {}
+                
+        except Exception as e:
+            print(f"Error during download: {e}")
+            return {
+                'status': 'failed',
+                'error': str(e),
+                'user': user,
+                'today_date': str(today),
+                'start_date': str(start_date)
+            }
         
         result = {
             'status': 'success',
@@ -113,86 +253,45 @@ with DAG(
             'days_downloaded': days_to_download,
             'output_directory': output_directory,
             'overwrite_existing': overwrite_existing,
-            'downloaded_fit_files': downloaded_fit_files,
-            'total_files_found': len(downloaded_fit_files) if downloaded_fit_files else 0
+            'downloaded_fit_files': downloaded_fit_files,  # Maintain backward compatibility
+            'total_files_found': len(downloaded_fit_files) if downloaded_fit_files else 0,
+            # Enhanced metadata for processing DAG compatibility
+            'file_details': file_details,
+            'activity_ids': activity_ids,
+            'download_summary': download_summary
         }
+        result.update({
+            'excluded_activities_count': len(existing_activity_ids),
+            'existing_activities_check_status': existing_activities_check.get('status', 'unknown') if existing_activities_check else 'not_available'
+        })
         
         print(f"Successfully downloaded {days_to_download} days of data for {user} from {start_date} to {start_date + timedelta(days=days_to_download-1)}")
         print(f"Downloaded FIT files: {len(downloaded_fit_files) if downloaded_fit_files else 0}")
+        print(f"Excluded existing activities: {len(existing_activity_ids)}")
         if downloaded_fit_files:
             for fit_file in downloaded_fit_files:
                 print(f"  - {fit_file}")
         
+        print(f"📥 DEBUG: download_garmin_daily_data returning result: {result}")
         return result
-        
-    @task.python(task_id='analyze_garmin_fit_files')
-    def analyze_garmin_fit_files(download_result, **context):
-        """
-        Analyze the downloaded Garmin FIT files
-        
-        Args:
-            download_result: Result from the download task containing FIT file paths
-            **context: Airflow context containing params and execution info
-            
-        Returns:
-            dict: Analysis results for the processed FIT files
-        """
-        params = context.get('params', {})
-        user = params.get('user', 'example@gmail.com')
-        
-        if not download_result or download_result.get('status') != 'success':
-            print("Download task failed, skipping analysis")
-            return {'status': 'skipped', 'reason': 'download_failed'}
-        
-        downloaded_fit_files = download_result.get('downloaded_fit_files', [])
-        
-        if not downloaded_fit_files:
-            print("No FIT files to analyze")
-            return {
-                'status': 'completed',
-                'user': user,
-                'files_analyzed': 0,
-                'analysis_results': []
-            }
-        
-        print(f"Starting analysis of {len(downloaded_fit_files)} FIT files for user: {user}")
-        
-        analysis_results = []
-        
-        for fit_file in downloaded_fit_files:
-            print(f"Analyzing FIT file: {fit_file}")
-            
-            # TODO: 这里你可以添加你的分析 API 调用
-            # 例如:
-            # analysis_api_result = your_analysis_api.analyze_fit_file(fit_file)
-            
-            # 暂时返回模拟的分析结果
-            file_analysis = {
-                'file_path': fit_file,
-                'file_name': os.path.basename(fit_file),
-                'analysis_timestamp': datetime.now().isoformat(),
-                # TODO: 添加实际的分析结果字段
-                # 'analysis_data': analysis_api_result
-            }
-            
-            analysis_results.append(file_analysis)
-            print(f"Completed analysis for: {fit_file}")
-        
-        result = {
-            'status': 'completed',
-            'user': user,
-            'files_analyzed': len(analysis_results),
-            'analysis_results': analysis_results,
-            'total_files_processed': len(downloaded_fit_files)
-        }
-        
-        print(f"Analysis completed for {len(analysis_results)} FIT files")
-        return result
-
 
     # Define the tasks and dependencies
-    download_task = download_garmin_daily_data()
-    analysis_task = analyze_garmin_fit_files(download_task)
-    
-    # Set task dependencies
-    download_task >> analysis_task
+    check_result = check_existing_activities()
+    download_result = download_garmin_daily_data(check_result)
+
+    # Trigger garmin_process_fit_files DAG after download completes
+    trigger_processing = TriggerDagRunOperator(
+        task_id='trigger_garmin_process_fit_files',
+        trigger_dag_id='garmin_process_fit_files',
+        conf={
+            'user': '{{ params.user }}',
+            'fit_file_ids': '{{ ti.xcom_pull(task_ids="download_garmin_daily_data")["activity_ids"] }}',
+            'source_directory': '{{ ti.xcom_pull(task_ids="download_garmin_daily_data")["output_directory"] }}',
+            'file_details': '{{ ti.xcom_pull(task_ids="download_garmin_daily_data")["file_details"] }}'
+        },
+        wait_for_completion=False,
+        dag=dag
+    )
+
+    # Set dependencies: download_result >> trigger_processing
+    download_result >> trigger_processing

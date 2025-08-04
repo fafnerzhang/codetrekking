@@ -4,16 +4,15 @@ PeakFlow Utilities Module
 """
 import json
 import sys
+import logging
 from pathlib import Path
 from typing import Optional
-from loguru import logger
-from loguru._logger import Logger
 
 from .const import DEFAULT_GARMIN_CONFIG, DEFAULT_GARMIN_CONFIG_DIR
 
 
 class LoggingConfig:
-    """Centralized logging configuration"""
+    """Centralized logging configuration using standard logging"""
     
     _initialized = False
     
@@ -21,75 +20,66 @@ class LoggingConfig:
     def setup_logging(cls, 
                      log_level: str = "INFO",
                      log_file: Optional[str] = None,
-                     log_rotation: str = "10 MB",
-                     log_retention: str = "30 days",
                      log_format: Optional[str] = None,
                      enable_console: bool = True) -> None:
         """
-        Setup loguru logging configuration
+        Setup standard logging configuration
         
         Args:
             log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
             log_file: Path to log file (optional)
-            log_rotation: Log file rotation size
-            log_retention: Log file retention period
             log_format: Custom log format
             enable_console: Enable console logging
         """
         if cls._initialized:
             return
         
-        # Remove default handler
-        logger.remove()
+        # Convert string level to logging constant
+        numeric_level = getattr(logging, log_level.upper(), logging.INFO)
         
         # Default format
         if log_format is None:
-            log_format = (
-                "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-                "<level>{level: <8}</level> | "
-                "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
-                "<level>{message}</level>"
-            )
+            log_format = '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'
+        
+        # Configure root logger
+        logging.basicConfig(
+            level=numeric_level,
+            format=log_format,
+            datefmt='%Y-%m-%d %H:%M:%S',
+            handlers=[]
+        )
         
         # Console handler
         if enable_console:
-            logger.add(
-                sys.stdout,
-                level=log_level,
-                format=log_format,
-                colorize=True,
-                backtrace=True,
-                diagnose=True
-            )
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setLevel(numeric_level)
+            formatter = logging.Formatter(log_format, datefmt='%Y-%m-%d %H:%M:%S')
+            console_handler.setFormatter(formatter)
+            logging.getLogger().addHandler(console_handler)
         
         # File handler
         if log_file:
             log_path = Path(log_file)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             
-            logger.add(
-                log_file,
-                level=log_level,
-                format=log_format,
-                rotation=log_rotation,
-                retention=log_retention,
-                compression="zip",
-                backtrace=True,
-                diagnose=True
-            )
+            file_handler = logging.FileHandler(log_file)
+            file_handler.setLevel(numeric_level)
+            formatter = logging.Formatter(log_format, datefmt='%Y-%m-%d %H:%M:%S')
+            file_handler.setFormatter(formatter)
+            logging.getLogger().addHandler(file_handler)
         
         cls._initialized = True
-        logger.info(f"🔧 Logging initialized - Level: {log_level}")
+        logging.info(f"🔧 Logging initialized - Level: {log_level}")
     
     @classmethod
-    def get_logger(cls, name: str = None) -> "Logger":
+    def get_logger(cls, name: str = None) -> logging.Logger:
         """Get a logger instance"""
         if not cls._initialized:
             cls.setup_logging()
         
         if name:
-            return logger.bind(name=name)
-        return logger
+            return logging.getLogger(name)
+        return logging.getLogger("peakflow")
 
 
 # Configure default logging for the module
@@ -105,23 +95,18 @@ def setup_peakflow_logging(log_level: str = "INFO",
     LoggingConfig.setup_logging(
         log_level=log_level,
         log_file=log_file,
-        log_format=(
-            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-            "<level>{level: <8}</level> | "
-            "<cyan>{name}</cyan> | "
-            "<level>{message}</level>"
-        )
+        log_format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'
     )
 
 
 # Default logger for the module
-def get_peakflow_logger(module_name: str):
+def get_peakflow_logger(module_name: str) -> logging.Logger:
     """Get a PeakFlow logger for a specific module"""
-    return LoggingConfig.get_logger().bind(module=module_name)
+    return LoggingConfig.get_logger(module_name)
 
 
 # Export logger creation function for other modules
-def get_logger(module_name: str) -> "Logger":
+def get_logger(module_name: str) -> logging.Logger:
     """Get a logger for a specific module"""
     return get_peakflow_logger(module_name)
 
