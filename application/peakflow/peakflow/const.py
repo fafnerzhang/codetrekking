@@ -3,11 +3,13 @@ import os
 
 
 USER_HOME = pathlib.Path.home()
-ELASTICSEARCH_HOST = os.getenv('ELASTICSEARCH_HOST', 'http://elasticsearch:9200')
+ELASTICSEARCH_HOST = os.getenv('ELASTICSEARCH_HOST', 'http://localhost:9200')
 ELASTICSEARCH_USER = os.getenv('ELASTICSEARCH_USER', 'elastic')
-ELASTICSEARCH_PASSWORD = os.getenv('ELASTICSEARCH_PASSWORD', 'change_me')
+ELASTICSEARCH_PASSWORD = os.getenv('ELASTICSEARCH_PASSWORD', 'ChangeMe')
 
-DEFAULT_GARMIN_CONFIG_DIR = USER_HOME / 'storage' / 'garmin' / '{user}'
+# Configurable Garmin data storage path
+GARMIN_BASE_DIR = os.getenv('DEFAULT_GARMIN_CONFIG_DIR', str(USER_HOME / 'storage' / 'garmin'))
+DEFAULT_GARMIN_CONFIG_DIR = os.path.join(GARMIN_BASE_DIR, '{user}')
 
 DEFAULT_GARMIN_CONFIG = {
     "db": {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for the enhanced FIT processor that extracts all valid fields
+Test script for the enhanced Activity processor that extracts all valid fields
 """
 import sys
 import os
@@ -14,7 +14,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 try:
-    from peakflow.processors.fit import FitFileProcessor, FitFieldMapper
+    from peakflow.processors.activity import ActivityProcessor, ActivityFieldMapper
     from peakflow.processors.interface import ProcessingOptions
     from peakflow.storage.elasticsearch import ElasticsearchStorage
     from peakflow.storage.interface import DataType
@@ -28,7 +28,7 @@ except ImportError as e:
     try:
         import peakflow
         print(f"Peakflow package location: {peakflow.__file__}")
-        from peakflow.processors.fit import FitFileProcessor, FitFieldMapper
+        from peakflow.processors.activity import ActivityProcessor, ActivityFieldMapper
         from peakflow.processors.interface import ProcessingOptions
         from peakflow.storage.elasticsearch import ElasticsearchStorage
         from peakflow.storage.interface import DataType
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 def test_field_mapper():
     """Test the field mapper functionality"""
-    mapper = FitFieldMapper()
+    mapper = ActivityFieldMapper()
     
     # Test field inclusion
     test_fields = [
@@ -91,7 +91,7 @@ def test_fit_processor():
         batch_size=1000
     )
     
-    processor = FitFileProcessor(storage, options)
+    processor = ActivityProcessor(storage, options)
     
     # Look for FIT files in multiple locations
     search_paths = [
@@ -109,7 +109,7 @@ def test_fit_processor():
     
     if not fit_files:
         # Mock test if no FIT files
-        mapper = FitFieldMapper()
+        mapper = ActivityFieldMapper()
         
         # Create a mock FIT message-like object for testing
         class MockField:

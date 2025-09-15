@@ -125,27 +125,28 @@ class TSSCalculator:
         except (ValueError, IndexError):
             raise ValueError(f"Invalid pace format: {pace_str}. Expected MM:SS or decimal minutes.")
     
-    def calculate_power_tss(self, activity_id: str, ftp: Optional[float] = None) -> Dict[str, Any]:
+    def calculate_power_tss(self, activity_id: str = None, ftp: Optional[float] = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Calculate Power-based Training Stress Score
         
         Args:
-            activity_id: Activity identifier
+            activity_id: Activity identifier (used if raw_data is None)
             ftp: Functional Threshold Power (watts). If None, will attempt to estimate from data
+            raw_data: Optional list of record dictionaries containing power data
             
         Returns:
             Dictionary containing TSS calculation results
         """
         try:
             # Get power data for the activity
-            power_data = self._get_power_data(activity_id)
+            power_data = self._get_power_data(activity_id, raw_data=raw_data)
             
             if not power_data:
                 raise InsufficientDataError("No power data available for TSS calculation")
             
             # Use provided FTP or estimate from thresholds
             if ftp is None:
-                ftp = self._estimate_ftp(activity_id)
+                ftp = self._estimate_ftp(activity_id or "raw_data")
                 if ftp is None:
                     raise CalculationError("FTP not provided and cannot be estimated")
             
@@ -174,25 +175,27 @@ class TSSCalculator:
             }
             
         except Exception as e:
-            logger.error(f"Error calculating power TSS for activity {activity_id}: {str(e)}")
+            activity_ref = activity_id or "raw_data"
+            logger.error(f"Error calculating power TSS for activity {activity_ref}: {str(e)}")
             raise CalculationError(f"Power TSS calculation failed: {str(e)}")
     
-    def calculate_hr_tss(self, activity_id: str, threshold_hr: Optional[int] = None, 
-                        max_hr: Optional[int] = None) -> Dict[str, Any]:
+    def calculate_hr_tss(self, activity_id: str = None, threshold_hr: Optional[int] = None, 
+                        max_hr: Optional[int] = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Calculate Heart Rate-based Training Stress Score
         
         Args:
-            activity_id: Activity identifier
+            activity_id: Activity identifier (used if raw_data is None)
             threshold_hr: Lactate threshold heart rate (LTHR)
             max_hr: Maximum heart rate
+            raw_data: Optional list of record dictionaries containing heart rate data
             
         Returns:
             Dictionary containing hrTSS calculation results
         """
         try:
             # Get heart rate data for the activity
-            hr_data = self._get_heart_rate_data(activity_id)
+            hr_data = self._get_heart_rate_data(activity_id, raw_data=raw_data)
             
             if not hr_data:
                 raise InsufficientDataError("No heart rate data available for hrTSS calculation")
@@ -230,10 +233,11 @@ class TSSCalculator:
             }
             
         except Exception as e:
-            logger.error(f"Error calculating hrTSS for activity {activity_id}: {str(e)}")
+            activity_ref = activity_id or "raw_data"
+            logger.error(f"Error calculating hrTSS for activity {activity_ref}: {str(e)}")
             raise CalculationError(f"hrTSS calculation failed: {str(e)}")
     
-    def calculate_running_pace_tss(self, activity_id: str, threshold_pace: Optional[float] = None) -> Dict[str, Any]:
+    def calculate_running_pace_tss(self, activity_id: str = None, threshold_pace: Optional[float] = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Calculate Running Pace-based Training Stress Score (rTSS)
         
@@ -245,15 +249,16 @@ class TSSCalculator:
         This follows the same approach as heart rate TSS
         
         Args:
-            activity_id: Activity identifier
+            activity_id: Activity identifier (used if raw_data is None)
             threshold_pace: Functional threshold pace in minutes per kilometer
+            raw_data: Optional list of record dictionaries containing speed data
             
         Returns:
             Dictionary containing running pace TSS calculation results
         """
         try:
             # Get speed data for the activity and convert to pace
-            speed_data = self._get_speed_data(activity_id)
+            speed_data = self._get_speed_data(activity_id, raw_data=raw_data)
             
             if not speed_data:
                 raise InsufficientDataError("No speed data available for running pace TSS calculation")
@@ -266,7 +271,7 @@ class TSSCalculator:
             
             # Use provided threshold pace or estimate
             if threshold_pace is None:
-                threshold_pace = self._estimate_threshold_pace(activity_id)
+                threshold_pace = self._estimate_threshold_pace(activity_id or "raw_data")
                 if threshold_pace is None:
                     raise CalculationError("Threshold pace not provided and cannot be estimated")
             
@@ -313,30 +318,33 @@ class TSSCalculator:
             }
             
         except Exception as e:
-            logger.error(f"Error calculating running pace TSS for activity {activity_id}: {str(e)}")
+            activity_ref = activity_id or "raw_data"
+            logger.error(f"Error calculating running pace TSS for activity {activity_ref}: {str(e)}")
             raise CalculationError(f"Running pace TSS calculation failed: {str(e)}")
     
-    def calculate_pace_tss(self, activity_id: str, threshold_pace: Optional[float] = None) -> Dict[str, Any]:
+    def calculate_pace_tss(self, activity_id: str = None, threshold_pace: Optional[float] = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Backward compatibility method for calculate_running_pace_tss
         
         Args:
-            activity_id: Activity identifier
+            activity_id: Activity identifier (used if raw_data is None)
             threshold_pace: Functional threshold pace in minutes per kilometer
+            raw_data: Optional list of record dictionaries containing speed data
             
         Returns:
             Dictionary containing running pace TSS calculation results
         """
-        return self.calculate_running_pace_tss(activity_id, threshold_pace)
+        return self.calculate_running_pace_tss(activity_id, threshold_pace, raw_data)
     
-    def calculate_composite_tss(self, activity_id: str, **kwargs) -> Dict[str, Any]:
+    def calculate_composite_tss(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None, **kwargs) -> Dict[str, Any]:
         """
         Calculate TSS using the best available method based on data availability
         
         Priority: Power > Heart Rate > Pace
         
         Args:
-            activity_id: Activity identifier
+            activity_id: Activity identifier (used if raw_data is None)
+            raw_data: Optional list of record dictionaries containing fitness data
             **kwargs: Optional parameters for specific TSS calculations
             
         Returns:
@@ -348,7 +356,8 @@ class TSSCalculator:
         try:
             power_tss = self.calculate_power_tss(
                 activity_id, 
-                ftp=kwargs.get('ftp')
+                ftp=kwargs.get('ftp'),
+                raw_data=raw_data
             )
             results['power_tss'] = power_tss
             results['primary_method'] = 'power'
@@ -361,7 +370,8 @@ class TSSCalculator:
             hr_tss = self.calculate_hr_tss(
                 activity_id,
                 threshold_hr=kwargs.get('threshold_hr'),
-                max_hr=kwargs.get('max_hr')
+                max_hr=kwargs.get('max_hr'),
+                raw_data=raw_data
             )
             results['hr_tss'] = hr_tss
             if 'primary_method' not in results:
@@ -374,7 +384,8 @@ class TSSCalculator:
         try:
             pace_tss = self.calculate_running_pace_tss(
                 activity_id,
-                threshold_pace=kwargs.get('threshold_pace')
+                threshold_pace=kwargs.get('threshold_pace'),
+                raw_data=raw_data
             )
             results['pace_tss'] = pace_tss
             if 'primary_method' not in results:
@@ -389,70 +400,16 @@ class TSSCalculator:
         results['calculated_at'] = datetime.now()
         return results
     
-    def calculate_weekly_tss(self, user_id: str, week_start: datetime) -> Dict[str, Any]:
-        """
-        Calculate total Training Stress Score for a week
+    def _get_power_data(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> List[float]:
+        """Get power data for an activity from storage or raw data"""
+        if raw_data is not None:
+            # Use provided raw data
+            power_data = [r.get('power', 0) for r in raw_data if r.get('power') and r.get('power') > 0]
+            return power_data
         
-        Args:
-            user_id: User identifier
-            week_start: Start date of the week
-            
-        Returns:
-            Dictionary containing weekly TSS summary
-        """
-        week_end = week_start + timedelta(days=7)
+        if activity_id is None:
+            raise ValueError("Either activity_id or raw_data must be provided")
         
-        # Get all activities for the week
-        query_filter = (QueryFilter()
-                       .add_term_filter("user_id", user_id)
-                       .add_date_range("timestamp", start=week_start, end=week_end))
-        
-        activities = self.storage.search(DataType.SESSION, query_filter)
-        
-        weekly_tss = 0.0
-        daily_tss = {}
-        activity_details = []
-        
-        for activity in activities:
-            activity_id = activity.get('activity_id')
-            activity_date = activity.get('timestamp', week_start).date()
-            
-            try:
-                tss_result = self.calculate_composite_tss(activity_id)
-                tss_value = tss_result.get('tss', 0)
-                
-                weekly_tss += tss_value
-                
-                # Group by day
-                day_str = activity_date.isoformat()
-                if day_str not in daily_tss:
-                    daily_tss[day_str] = 0
-                daily_tss[day_str] += tss_value
-                
-                activity_details.append({
-                    'activity_id': activity_id,
-                    'date': day_str,
-                    'tss': tss_value,
-                    'method': tss_result.get('primary_method'),
-                    'sport': activity.get('sport', 'unknown')
-                })
-                
-            except Exception as e:
-                logger.warning(f"Could not calculate TSS for activity {activity_id}: {str(e)}")
-                continue
-        
-        return {
-            'weekly_tss': round(weekly_tss, 1),
-            'daily_tss': daily_tss,
-            'activity_count': len(activity_details),
-            'activity_details': activity_details,
-            'week_start': week_start.isoformat(),
-            'week_end': week_end.isoformat(),
-            'avg_daily_tss': round(weekly_tss / 7, 1)
-        }
-    
-    def _get_power_data(self, activity_id: str) -> List[float]:
-        """Get power data for an activity"""
         query_filter = (QueryFilter()
                        .add_term_filter("activity_id", activity_id)
                        .add_sort("timestamp", ascending=True)
@@ -462,8 +419,16 @@ class TSSCalculator:
         power_data = [r.get('power', 0) for r in records if r.get('power') and r.get('power') > 0]
         return power_data
     
-    def _get_heart_rate_data(self, activity_id: str) -> List[int]:
-        """Get heart rate data for an activity"""
+    def _get_heart_rate_data(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> List[int]:
+        """Get heart rate data for an activity from storage or raw data"""
+        if raw_data is not None:
+            # Use provided raw data
+            hr_data = [r.get('heart_rate', 0) for r in raw_data if r.get('heart_rate') and r.get('heart_rate') > 0]
+            return hr_data
+        
+        if activity_id is None:
+            raise ValueError("Either activity_id or raw_data must be provided")
+        
         query_filter = (QueryFilter()
                        .add_term_filter("activity_id", activity_id)
                        .add_sort("timestamp", ascending=True)
@@ -473,8 +438,20 @@ class TSSCalculator:
         hr_data = [r.get('heart_rate', 0) for r in records if r.get('heart_rate') and r.get('heart_rate') > 0]
         return hr_data
     
-    def _get_speed_data(self, activity_id: str) -> List[float]:
-        """Get speed data for an activity"""
+    def _get_speed_data(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> List[float]:
+        """Get speed data for an activity from storage or raw data"""
+        if raw_data is not None:
+            # Use provided raw data
+            speed_data = []
+            for r in raw_data:
+                speed = r.get('speed') or r.get('enhanced_speed')
+                if speed and speed > 0:
+                    speed_data.append(speed)
+            return speed_data
+        
+        if activity_id is None:
+            raise ValueError("Either activity_id or raw_data must be provided")
+        
         query_filter = (QueryFilter()
                        .add_term_filter("activity_id", activity_id)
                        .add_sort("timestamp", ascending=True)
@@ -490,9 +467,9 @@ class TSSCalculator:
         
         return speed_data
     
-    def _get_pace_data(self, activity_id: str) -> List[float]:
-        """Get pace data for an activity (converted from speed to min/km)"""
-        speed_data = self._get_speed_data(activity_id)
+    def _get_pace_data(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> List[float]:
+        """Get pace data for an activity (converted from speed to min/km) from storage or raw data"""
+        speed_data = self._get_speed_data(activity_id, raw_data=raw_data)
         pace_data = [self.speed_to_pace_per_km(speed) for speed in speed_data if speed > 0]
         return pace_data
     
@@ -584,8 +561,12 @@ class TSSCalculator:
         
         return min(intensity_factor, 2.0)  # Cap at 2.0 for safety
     
-    def _estimate_ftp(self, activity_id: str) -> Optional[float]:
-        """Estimate FTP from power zones in thresholds"""
+    def _estimate_ftp(self, activity_ref: str) -> Optional[float]:
+        """Estimate FTP from power zones in thresholds
+        
+        Args:
+            activity_ref: Activity identifier or reference (used for logging)
+        """
         if self.thresholds and self.thresholds.power_zones:
             # FTP is typically the upper bound of Zone 3 or lower bound of Zone 4
             for zone_name, (min_power, max_power) in self.thresholds.power_zones.items():
@@ -616,15 +597,19 @@ class TSSCalculator:
         logger.debug("No heart rate zones defined, using default threshold HR of 170 bpm")
         return 170
     
-    def _estimate_threshold_pace(self, activity_id: str) -> Optional[float]:
-        """Estimate threshold pace from pace zones (in min/km format)"""
+    def _estimate_threshold_pace(self, activity_ref: str) -> Optional[float]:
+        """Estimate threshold pace from pace zones (in min/km format)
+        
+        Args:
+            activity_ref: Activity identifier or reference (used for logging)
+        """
         if self.thresholds and self.thresholds.pace_zones:
             # Threshold pace is typically Zone 4 or threshold zone
-            for zone_name, (min_pace, max_pace) in self.thresholds.pace_zones.items():
+            for zone_name, (_, max_pace) in self.thresholds.pace_zones.items():
                 if 'zone_4' in zone_name.lower() or 'threshold' in zone_name.lower():
                     return float(max_pace)  # For pace, higher values are slower
             # Fallback: use zone_3 upper bound
-            for zone_name, (min_pace, max_pace) in self.thresholds.pace_zones.items():
+            for zone_name, (_, max_pace) in self.thresholds.pace_zones.items():
                 if 'zone_3' in zone_name.lower():
                     return float(max_pace)
         

@@ -1,262 +1,266 @@
 #!/usr/bin/env python3
 """
-Analytics Abstract Interface - Defines standard interfaces for all analytics functionality
+Analytics interface definitions and data structures.
+
+This module defines the common interfaces and data structures used across
+the analytics package for fitness data analysis.
 """
+
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional, Union, Tuple
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from dataclasses import dataclass
+from typing import Dict, List, Any, Optional, Tuple
+import uuid
 
 
 class AnalyticsType(Enum):
-    """Analytics type enumeration"""
-    PERFORMANCE = "performance"
-    HEART_RATE = "heart_rate"
-    POWER = "power"
-    RUNNING_DYNAMICS = "running_dynamics"
-    TRAJECTORY = "trajectory"
+    """Types of analytics that can be performed"""
+    POWER_ANALYSIS = "power_analysis"
+    HEART_RATE_ANALYSIS = "heart_rate_analysis"
+    HEART_RATE_ZONES = "heart_rate_zones"
+    PACE_ANALYSIS = "pace_analysis"
+    PACE_ZONES = "pace_zones"
     TRAINING_LOAD = "training_load"
-    RECOVERY = "recovery"
+    RECOVERY_ANALYSIS = "recovery_analysis"
+    PERFORMANCE_TRENDS = "performance_trends"
     COMPARISON = "comparison"
 
 
 class AggregationLevel(Enum):
-    """Aggregation level enumeration"""
-    ACTIVITY = "activity"
-    DAILY = "daily"
-    WEEKLY = "weekly"
-    MONTHLY = "monthly"
-    YEARLY = "yearly"
+    """Levels of data aggregation"""
+    RAW = "raw"
+    SECOND = "second"
+    MINUTE = "minute"
+    HOUR = "hour"
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+    YEAR = "year"
 
 
 @dataclass
 class TimeRange:
-    """Time range"""
-    start: Optional[datetime] = None
-    end: Optional[datetime] = None
+    """Time range specification for analytics queries"""
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
     days: Optional[int] = None
+    weeks: Optional[int] = None
+    months: Optional[int] = None
     
     def to_dates(self) -> Tuple[Optional[datetime], Optional[datetime]]:
-        """Convert to start and end dates"""
+        """Convert time range specification to start and end dates"""
+        if self.start_date and self.end_date:
+            return self.start_date, self.end_date
+        
+        now = datetime.now()
+        
         if self.days:
-            end_date = self.end or datetime.now()
-            start_date = end_date - timedelta(days=self.days)
-            return start_date, end_date
-        return self.start, self.end
-
-
-@dataclass
-class AnalyticsFilter:
-    """Analytics filter"""
-    user_id: str
-    activity_ids: Optional[List[str]] = None
-    time_range: Optional[TimeRange] = None
-    sport_types: Optional[List[str]] = None
-    intensity_levels: Optional[List[str]] = None
-    min_distance: Optional[float] = None
-    max_distance: Optional[float] = None
-    min_duration: Optional[int] = None
-    max_duration: Optional[int] = None
+            start = now - timedelta(days=self.days)
+            return start, now
+        elif self.weeks:
+            start = now - timedelta(weeks=self.weeks)
+            return start, now
+        elif self.months:
+            start = now - timedelta(days=self.months * 30)
+            return start, now
+        
+        return self.start_date, self.end_date
 
 
 @dataclass
 class MetricThresholds:
-    """Metric thresholds"""
-    heart_rate_zones: Optional[Dict[str, Tuple[int, int]]] = None
-    power_zones: Optional[Dict[str, Tuple[int, int]]] = None
-    pace_zones: Optional[Dict[str, Tuple[float, float]]] = None
-    training_stress_threshold: Optional[float] = None
+    """Training zone thresholds and limits for different metrics"""
+    power_zones: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    heart_rate_zones: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    pace_zones: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    speed_zones: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    
+    # Threshold values
+    functional_threshold_power: Optional[float] = None
+    lactate_threshold_heart_rate: Optional[int] = None
+    critical_pace: Optional[float] = None
+    vo2_max: Optional[float] = None
+    resting_heart_rate: Optional[int] = None
+    max_heart_rate: Optional[int] = None
+
+
+@dataclass
+class AnalyticsFilter:
+    """Filter criteria for analytics queries"""
+    user_id: str
+    time_range: TimeRange
+    sport_types: List[str] = field(default_factory=list)
+    activity_ids: List[str] = field(default_factory=list)
+    equipment_ids: List[str] = field(default_factory=list)
+    min_duration: Optional[int] = None  # Minimum duration in seconds
+    max_duration: Optional[int] = None  # Maximum duration in seconds
+    min_distance: Optional[float] = None  # Minimum distance in meters
+    max_distance: Optional[float] = None  # Maximum distance in meters
+    tags: List[str] = field(default_factory=list)
+    
+    # Advanced filters
+    power_range: Optional[Tuple[float, float]] = None
+    heart_rate_range: Optional[Tuple[int, int]] = None
+    pace_range: Optional[Tuple[float, float]] = None
 
 
 @dataclass
 class AnalyticsResult:
-    """Analytics result"""
+    """Result container for analytics operations"""
     analytics_type: AnalyticsType
     data: Dict[str, Any]
-    metadata: Dict[str, Any]
-    generated_at: datetime
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    generated_at: datetime = field(default_factory=datetime.now)
+    result_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     
-    def __post_init__(self):
-        if not self.generated_at:
-            self.generated_at = datetime.now()
-
-
-class FitnessAnalyzer(ABC):
-    """Fitness data analyzer abstract base class"""
-    
-    def __init__(self, storage, thresholds: Optional[MetricThresholds] = None):
-        self.storage = storage
-        self.thresholds = thresholds or MetricThresholds()
-    
-    @abstractmethod
-    def analyze_performance(self, filter_criteria: AnalyticsFilter, 
-                          aggregation_level: AggregationLevel = AggregationLevel.ACTIVITY) -> AnalyticsResult:
-        """Performance analysis"""
-        pass
-    
-    @abstractmethod
-    def analyze_heart_rate(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
-        """Heart rate analysis"""
-        pass
-    
-    @abstractmethod
-    def analyze_training_load(self, filter_criteria: AnalyticsFilter, 
-                            aggregation_level: AggregationLevel = AggregationLevel.WEEKLY) -> AnalyticsResult:
-        """Training load analysis"""
-        pass
-    
-    @abstractmethod
-    def analyze_trends(self, filter_criteria: AnalyticsFilter, 
-                      metrics: List[str], 
-                      aggregation_level: AggregationLevel = AggregationLevel.WEEKLY) -> AnalyticsResult:
-        """Trend analysis"""
-        pass
-
-
-class PowerAnalyzer(ABC):
-    """Power analyzer abstract base class"""
-    
-    @abstractmethod
-    def analyze_power_distribution(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
-        """Power distribution analysis"""
-        pass
-    
-    @abstractmethod
-    def calculate_ftp_estimate(self, filter_criteria: AnalyticsFilter) -> Optional[float]:
-        """Calculate Functional Threshold Power (FTP) estimate"""
-        pass
-    
-    @abstractmethod
-    def analyze_power_zones(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
-        """Power zone analysis"""
-        pass
-
-
-class RunningDynamicsAnalyzer(ABC):
-    """Running dynamics analyzer abstract base class"""
-    
-    @abstractmethod
-    def analyze_cadence(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
-        """Cadence analysis"""
-        pass
-    
-    @abstractmethod
-    def analyze_stride_metrics(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
-        """Stride metrics analysis"""
-        pass
-    
-    @abstractmethod
-    def analyze_vertical_oscillation(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
-        """Vertical oscillation analysis"""
-        pass
-    
-    @abstractmethod
-    def analyze_ground_contact_time(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
-        """Ground contact time analysis"""
-        pass
-
-
-class TrajectoryAnalyzer(ABC):
-    """Trajectory analyzer abstract base class"""
-    
-    @abstractmethod
-    def analyze_route_efficiency(self, activity_id: str) -> Dict[str, Any]:
-        """Route efficiency analysis"""
-        pass
-    
-    @abstractmethod
-    def detect_segments(self, activity_id: str, segment_type: str = "climb") -> List[Dict[str, Any]]:
-        """Segment detection (climbs, descents, flats, etc.)"""
-        pass
-    
-    @abstractmethod
-    def calculate_elevation_profile(self, activity_id: str) -> Dict[str, Any]:
-        """Elevation profile calculation"""
-        pass
-    
-    @abstractmethod
-    def get_route_statistics(self, activity_id: str) -> Dict[str, Any]:
-        """Route statistics"""
-        pass
-
-
-class RecoveryAnalyzer(ABC):
-    """Recovery analyzer abstract base class"""
-    
-    @abstractmethod
-    def calculate_recovery_score(self, filter_criteria: AnalyticsFilter) -> Dict[str, Any]:
-        """Calculate recovery score"""
-        pass
-    
-    @abstractmethod
-    def analyze_resting_heart_rate_trend(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
-        """Resting heart rate trend analysis"""
-        pass
-    
-    @abstractmethod
-    def estimate_recovery_time(self, activity_id: str) -> Optional[int]:
-        """Estimate recovery time (hours)"""
-        pass
-
-
-class ComparisonAnalyzer(ABC):
-    """Comparison analyzer abstract base class"""
-    
-    @abstractmethod
-    def compare_activities(self, activity_ids: List[str], metrics: List[str]) -> AnalyticsResult:
-        """Activity comparison"""
-        pass
-    
-    @abstractmethod
-    def compare_time_periods(self, user_id: str, period1: TimeRange, 
-                           period2: TimeRange, metrics: List[str]) -> AnalyticsResult:
-        """Time period comparison"""
-        pass
-    
-    @abstractmethod
-    def compare_users(self, user_ids: List[str], filter_criteria: AnalyticsFilter, 
-                     metrics: List[str]) -> AnalyticsResult:
-        """User comparison (anonymized)"""
-        pass
-
-
-class CompositeAnalyzer(FitnessAnalyzer, PowerAnalyzer, RunningDynamicsAnalyzer, 
-                       TrajectoryAnalyzer, RecoveryAnalyzer, ComparisonAnalyzer):
-    """Composite analyzer - complete implementation with all analytics features"""
-    
-    @abstractmethod
-    def generate_comprehensive_report(self, filter_criteria: AnalyticsFilter) -> Dict[str, AnalyticsResult]:
-        """Generate comprehensive analytics report"""
-        pass
-    
-    @abstractmethod
-    def get_personalized_insights(self, user_id: str, days: int = 30) -> List[Dict[str, Any]]:
-        """Personalized insights"""
-        pass
-    
-    @abstractmethod
-    def detect_anomalies(self, filter_criteria: AnalyticsFilter) -> List[Dict[str, Any]]:
-        """Anomaly detection"""
-        pass
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert result to dictionary format"""
+        return {
+            'result_id': self.result_id,
+            'analytics_type': self.analytics_type.value,
+            'data': self.data,
+            'metadata': self.metadata,
+            'generated_at': self.generated_at.isoformat()
+        }
 
 
 # Exception classes
 class AnalyticsError(Exception):
-    """Analytics error base class"""
+    """Base exception for analytics operations"""
     pass
 
 
 class InsufficientDataError(AnalyticsError):
-    """Insufficient data error"""
+    """Raised when there is insufficient data for analysis"""
     pass
 
 
 class InvalidParameterError(AnalyticsError):
-    """Invalid parameter error"""
+    """Raised when invalid parameters are provided"""
     pass
 
 
 class CalculationError(AnalyticsError):
-    """Calculation error"""
+    """Raised when calculation fails"""
     pass
+
+
+# Abstract analyzer interfaces
+class FitnessAnalyzer(ABC):
+    """Abstract base class for fitness data analyzers"""
+    
+    @abstractmethod
+    def analyze(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Perform fitness analysis based on filter criteria"""
+        pass
+
+
+class PowerAnalyzer(ABC):
+    """Abstract base class for power data analysis"""
+    
+    @abstractmethod
+    def calculate_normalized_power(self, power_data: List[float]) -> float:
+        """Calculate normalized power from power data"""
+        pass
+    
+    @abstractmethod
+    def calculate_intensity_factor(self, power_data: List[float], ftp: float) -> float:
+        """Calculate intensity factor"""
+        pass
+    
+    @abstractmethod
+    def analyze_power_curve(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Analyze power curve over time"""
+        pass
+
+
+class RunningDynamicsAnalyzer(ABC):
+    """Abstract base class for running dynamics analysis"""
+    
+    @abstractmethod
+    def analyze_cadence(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Analyze running cadence patterns"""
+        pass
+    
+    @abstractmethod
+    def analyze_stride_metrics(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Analyze stride length and frequency"""
+        pass
+
+
+class TrajectoryAnalyzer(ABC):
+    """Abstract base class for GPS trajectory analysis"""
+    
+    @abstractmethod
+    def analyze_route_efficiency(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Analyze route efficiency and smoothness"""
+        pass
+    
+    @abstractmethod
+    def detect_segments(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Detect and analyze route segments"""
+        pass
+
+
+class RecoveryAnalyzer(ABC):
+    """Abstract base class for recovery analysis"""
+    
+    @abstractmethod
+    def analyze_heart_rate_variability(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Analyze heart rate variability for recovery insights"""
+        pass
+    
+    @abstractmethod
+    def calculate_recovery_metrics(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Calculate recovery metrics"""
+        pass
+
+
+class HeartRateZoneAnalyzer(ABC):
+    """Abstract base class for heart rate zone analysis"""
+    
+    @abstractmethod
+    def calculate_heart_rate_zones(self, max_heart_rate: Optional[int] = None, 
+                                 age: Optional[int] = None, method: str = "bcf_abcc_wcpp_revised") -> AnalyticsResult:
+        """Calculate heart rate zones using specified method"""
+        pass
+    
+    @abstractmethod
+    def analyze_time_in_zones(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Analyze time spent in different heart rate zones"""
+        pass
+    
+    @abstractmethod
+    def compare_zone_methods(self, max_heart_rate: Optional[int] = None, 
+                           age: Optional[int] = None) -> AnalyticsResult:
+        """Compare different heart rate zone calculation methods"""
+        pass
+
+
+class ComparisonAnalyzer(ABC):
+    """Abstract base class for comparative analysis"""
+    
+    @abstractmethod
+    def compare_activities(self, activity_ids: List[str]) -> AnalyticsResult:
+        """Compare multiple activities"""
+        pass
+    
+    @abstractmethod
+    def compare_time_periods(self, period1: TimeRange, period2: TimeRange, user_id: str) -> AnalyticsResult:
+        """Compare performance across time periods"""
+        pass
+
+
+class CompositeAnalyzer(ABC):
+    """Abstract base class for composite analysis combining multiple metrics"""
+    
+    @abstractmethod
+    def generate_fitness_summary(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Generate comprehensive fitness summary"""
+        pass
+    
+    @abstractmethod
+    def analyze_training_distribution(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
+        """Analyze training intensity distribution"""
+        pass

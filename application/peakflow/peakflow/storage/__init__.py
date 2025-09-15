@@ -4,26 +4,26 @@ Storage Module - Storage layer abstraction and implementation
 """
 
 from .interface import (
-    StorageInterface, 
-    DataType, 
-    QueryFilter, 
-    AggregationQuery, 
+    StorageInterface,
+    DataType,
+    QueryFilter,
+    AggregationQuery,
     IndexingResult,
     DataValidator,
     ValidationError,
-    StorageError
+    StorageError,
 )
 
 from .elasticsearch import ElasticsearchStorage
 
 __all__ = [
-    'StorageInterface', 
-    'DataType', 
-    'QueryFilter', 
-    'AggregationQuery', 
-    'IndexingResult',
-    'DataValidator',
-    'ValidationError',
-    'StorageError',
-    'ElasticsearchStorage'
+    "StorageInterface",
+    "DataType",
+    "QueryFilter",
+    "AggregationQuery",
+    "IndexingResult",
+    "DataValidator",
+    "ValidationError",
+    "StorageError",
+    "ElasticsearchStorage",
 ]

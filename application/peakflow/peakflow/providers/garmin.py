@@ -39,34 +39,42 @@ class CustomDownload(Download):
             logger.info("get_activities: skipping download of %s, already present", activity_id_str)
         return activity_id_str
 
-    def get_activities(self, directory, count, overwite=False, exclude_activity_ids: Optional[Set[str]] = None) -> list[str]:
+    def get_activities(self, directory, count, overwite=False, exclude_activity_ids: Optional[Set[str]] = None):
         self.temp_dir = tempfile.mkdtemp()
         logger.info("Getting activities: directory='%s' count=%s temp=%s", directory, str(count), self.temp_dir)
         activitys = self.get_activity_summaries(0, count)
-        success_activitys = []
         
         if not activitys:
             logger.warning("No activities found")
-            return success_activitys
-            
-        for activity in activitys:
-            activity_id_str = str(activity['activityId'])
-            if exclude_activity_ids and activity_id_str in exclude_activity_ids:
-                logger.info("Skipping activity %s (excluded)", activity_id_str)
-                continue
-            try:
-                activity_id_str = self.get_activity(activity, directory, overwite)
-                success_activitys.append(activity_id_str)
-            except Exception as e:
-                logger.error("Error getting activity %s: %s", str(activity.get('activityId', 'unknown')), str(e))
+            # Don't use return in a generator - yield nothing and let the generator complete naturally
+        else:
+            for activity in activitys:
+                activity_id_str = str(activity['activityId'])
+                if exclude_activity_ids and activity_id_str in exclude_activity_ids:
+                    logger.info("Skipping activity %s (excluded)", activity_id_str)
+                    continue
+                try:
+                    activity_id_str = self.get_activity(activity, directory, overwite)
+                    
+                    # Immediately unzip the individual activity to ensure FIT file exists
+                    try:
+                        # Try to unzip just this activity's files
+                        self._Download__unzip_files(directory)
+                        logger.info("Unzipped activity %s files", activity_id_str)
+                    except Exception as unzip_error:
+                        logger.warning("Error unzipping activity %s: %s", activity_id_str, str(unzip_error))
+                    
+                    yield activity_id_str
+                except Exception as e:
+                    logger.error("Error getting activity %s: %s", str(activity.get('activityId', 'unknown')), str(e))
+                    # Continue with next activity instead of stopping iteration
         
+        # Final unzip operation to catch any remaining files (redundant but safe)
         try:
             self._Download__unzip_files(directory)
-            logger.info("Unzipped files to directory: %s", directory)
+            logger.info("Final unzip completed for directory: %s", directory)
         except Exception as e:
-            logger.error("Error unzipping files: %s", str(e))
-            
-        return success_activitys
+            logger.error("Error in final unzip operation: %s", str(e))
 
 
 class GarminClient:
@@ -89,9 +97,7 @@ class GarminClient:
         try:
             activities_path = self._ensure_directory(Path(output_dir) / "activities")
             logger.info("Downloading activity data to: %s", activities_path)
-            result = self.downloader.get_activities(str(activities_path), days, overwrite, exclude_activity_ids=exclude_activity_ids)
-            logger.info("Activity download completed. Downloaded %s activities", len(result) if result else 0)
-            return result
+            yield from self.downloader.get_activities(str(activities_path), days, overwrite, exclude_activity_ids=exclude_activity_ids)
         except Exception as e:
             logger.error("Error downloading activities: %s", str(e))
             raise
@@ -117,63 +123,106 @@ class GarminClient:
             raise
 
     def download_daily_data(self, output_dir: str, start_date: datetime.date, days: int, overwrite: bool = False, exclude_activity_ids: Optional[Set[str]] = None):
+        """
+        Iterator version: yields metadata for each FIT file as soon as it is downloaded and available.
+        """
         try:
+            # Use user_id override for output directory if available
+            if hasattr(self, '_user_id_override') and self._user_id_override:
+                user_output_dir = Path(output_dir) / self._user_id_override
+                user_output_dir.mkdir(parents=True, exist_ok=True)
+                logger.info("Using user_id override directory: %s", user_output_dir)
+                output_dir = str(user_output_dir)
+            
             logger.info("Starting to download %s days of daily data, starting from %s", days, start_date)
+            activities_path = self._ensure_directory(Path(output_dir) / "activities")
+            print(output_dir, start_date, days, overwrite, exclude_activity_ids)
+            # Track yielded activities to avoid duplicates
+            yielded_activities = set()
             
-            # Collect all downloaded file paths and metadata
-            downloaded_files = []
-            downloaded_fit_files = []  # For backward compatibility
-            file_details = []
-            
-            # Download activities and collect FIT files
-            activity_results = self.download_activities(output_dir, start_date, days, overwrite, exclude_activity_ids=exclude_activity_ids)
-            if activity_results:
-                activities_path = Path(output_dir) / "activities"
-                for activity_id in activity_results:
-                    fit_file = activities_path / f"{activity_id}.fit"
-                    if fit_file.exists():
-                        file_path = str(fit_file)
-                        downloaded_files.append(file_path)
-                        downloaded_fit_files.append(file_path)  # Backward compatibility
-                        
-                        # Collect file metadata for processing DAG
-                        file_details.append({
+            # download_activities is a generator, so we iterate over its results
+            for activity_id in self.download_activities(output_dir, start_date, days, overwrite, exclude_activity_ids=exclude_activity_ids):
+                if activity_id in yielded_activities:
+                    continue
+                    
+                # Check for multiple possible FIT file naming patterns
+                possible_fit_files = [
+                    activities_path / f"{activity_id}.fit",           # Standard pattern
+                    activities_path / f"{activity_id}_ACTIVITY.fit",  # Garmin's actual pattern
+                    activities_path / f"activity_{activity_id}.fit"   # Alternative pattern
+                ]
+                
+                # Find the actual FIT file that exists
+                actual_fit_file = None
+                for fit_file_candidate in possible_fit_files:
+                    if fit_file_candidate.exists() and fit_file_candidate.stat().st_size > 0:
+                        actual_fit_file = fit_file_candidate
+                        break
+                
+                # Wait a bit and check if FIT file exists, with retry logic
+                max_retries = 5
+                retry_delay = 0.5
+                
+                for attempt in range(max_retries):
+                    # Re-check for files in case unzip completed during retry
+                    if actual_fit_file is None:
+                        for fit_file_candidate in possible_fit_files:
+                            if fit_file_candidate.exists() and fit_file_candidate.stat().st_size > 0:
+                                actual_fit_file = fit_file_candidate
+                                break
+                    
+                    if actual_fit_file is not None:
+                        file_path = str(actual_fit_file)
+                        metadata = {
                             'file_path': file_path,
-                            'file_name': fit_file.name,
+                            'file_name': actual_fit_file.name,
                             'activity_id': activity_id,
-                            'file_size': fit_file.stat().st_size,
-                            'modified_time': fit_file.stat().st_mtime,
-                            'download_date': datetime.datetime.now().isoformat()
-                        })
-            
-            # Download other data types
+                            'file_size': actual_fit_file.stat().st_size,
+                            'modified_time': actual_fit_file.stat().st_mtime,
+                            'download_date': datetime.datetime.now().isoformat(),
+                            'output_directory': str(activities_path)
+                        }
+                        logger.info(f"Yielding downloaded FIT file: {file_path}")
+                        yielded_activities.add(activity_id)
+                        yield metadata
+                        break
+                    else:
+                        if attempt < max_retries - 1:
+                            logger.debug(f"FIT file not ready for {activity_id}, attempt {attempt + 1}/{max_retries}")
+                            time.sleep(retry_delay)
+                        else:
+                            # FIT file not found after all retries - this is a serious issue
+                            logger.error(f"CRITICAL: No FIT file found for activity {activity_id} after {max_retries} attempts")
+                            logger.error(f"Checked patterns: {[str(f) for f in possible_fit_files]}")
+                            logger.error(f"Activity {activity_id} will be skipped - potential data loss!")
+                            
+                            # Check if any files exist for this activity to help debug
+                            activity_files = list(activities_path.glob(f"*{activity_id}*"))
+                            if activity_files:
+                                logger.info(f"Found related files for activity {activity_id}: {[f.name for f in activity_files]}")
+                            else:
+                                logger.error(f"No files found for activity {activity_id} in {activities_path}")
+                            
+                            # Yield error metadata instead of silently dropping the activity
+                            error_metadata = {
+                                'file_path': str(possible_fit_files[0]),  # Expected path
+                                'file_name': possible_fit_files[0].name,
+                                'activity_id': activity_id,
+                                'file_size': 0,
+                                'modified_time': 0,
+                                'download_date': datetime.datetime.now().isoformat(),
+                                'output_directory': str(activities_path),
+                                'error': f'FIT file not found after {max_retries} attempts',
+                                'status': 'error'
+                            }
+                            yielded_activities.add(activity_id)
+                            yield error_metadata
+
+            # Download other data types (sleep, monitoring) after activities
             self.download_sleep(output_dir, start_date, days, overwrite)
             self.download_monitoring(output_dir, start_date, days, overwrite)
-            
-            # Create comprehensive result
-            result = {
-                'downloaded_fit_files': downloaded_fit_files,  # For backward compatibility
-                'downloaded_files': downloaded_files,  # Simple list for legacy support
-                'file_details': file_details,  # Detailed metadata for processing DAG
-                'total_files': len(downloaded_files),
-                'activity_ids': activity_results if activity_results else [],
-                'excluded_count': len(exclude_activity_ids) if exclude_activity_ids else 0,
-                'download_summary': {
-                    'start_date': start_date.isoformat(),
-                    'days': days,
-                    'output_directory': output_dir,
-                    'overwrite': overwrite,
-                    'total_activities_downloaded': len(activity_results) if activity_results else 0,
-                    'total_fit_files': len(downloaded_files),
-                    'download_timestamp': datetime.datetime.now().isoformat()
-                }
-            }
-            
-            logger.info("Daily data download completed! Downloaded %s FIT files", len(downloaded_files))
-            return result
-            
         except Exception as e:
-            logger.error("Error in download_daily_data: %s", str(e))
+            logger.error("Error in download_daily_data (iterator): %s", str(e))
             raise
 
     def _ensure_directory(self, path: Path) -> Path:
@@ -199,6 +248,65 @@ class GarminClient:
             return year_dir
 
         return directory_func
+
+    @classmethod
+    def create_from_config(cls, config_dict: dict, user_id: str = None, config_base_dir: str = None) -> 'GarminClient':
+        """Create GarminClient from in-memory config dictionary."""
+        from ..const import DEFAULT_GARMIN_CONFIG_DIR
+        from ..utils import get_garmin_config_dir
+        
+        if user_id:
+            # Use the standard Garmin config directory structure
+            if config_base_dir:
+                # If config_base_dir is provided, user_id folder should be created directly under it
+                config_dir = str(Path(config_base_dir) / user_id)
+                Path(config_dir).mkdir(parents=True, exist_ok=True)
+            else:
+                # Use DEFAULT_GARMIN_CONFIG_DIR format with {user} placeholder
+                base_dir = DEFAULT_GARMIN_CONFIG_DIR
+                config_dir = get_garmin_config_dir(user_id, base_dir)
+        else:
+            # Fallback to temporary directory for backward compatibility
+            config_dir = tempfile.mkdtemp()
+        
+        config_file = Path(config_dir) / "GarminConnectConfig.json"
+        
+        try:
+            # If config_dict is just credentials, expand it to full config structure
+            if 'credentials' not in config_dict and ('user' in config_dict or 'password' in config_dict):
+                # This is a simple credentials dict, expand it to full config
+                from ..const import DEFAULT_GARMIN_CONFIG
+                full_config = DEFAULT_GARMIN_CONFIG.copy()
+                full_config['credentials']['user'] = config_dict.get('user', '')
+                full_config['credentials']['password'] = config_dict.get('password', '')
+                config_to_write = full_config
+            else:
+                # This is already a full config
+                config_to_write = config_dict
+            
+            # Write config to directory (creates directory if needed)
+            with open(config_file, 'w') as f:
+                json.dump(config_to_write, f, indent=4)
+            
+            # Create client using config directory
+            client = cls(config_dir)
+            
+            # Override the username used for directory creation with user_id
+            if user_id:
+                client._user_id_override = user_id
+            
+            # Store config_dir for reference (no cleanup needed for permanent dirs)
+            client._config_dir = config_dir
+            client._is_temp_config = user_id is None  # Only temp if no user_id provided
+            
+            return client
+        except Exception as e:
+            # Only clean up if it was a temporary directory
+            if user_id is None:
+                import shutil
+                shutil.rmtree(config_dir, ignore_errors=True)
+            logger.error(f"Failed to create GarminClient from config: {e}")
+            raise
 
     @staticmethod
     def create_safe_client(config_dir: str, max_retries: int = 3):
@@ -231,6 +339,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Download Garmin data using PeakFlow')
+    parser.add_argument('--user-id', required=True, help='User ID for file organization')
     parser.add_argument('--user', required=True, help='Garmin Connect username')
     parser.add_argument('--password', required=True, help='Garmin Connect password')
     parser.add_argument('--output-dir', required=True, help='Output directory for downloaded data')
@@ -244,10 +353,10 @@ def main():
     try:
         # Parse start date
         start_date = datetime.datetime.strptime(args.start_date, '%Y-%m-%d').date()
-        # Setup configuration
-        config_dir = args.config_dir or f'/storage/garmin/{args.user}'
-        build_garmin_config(args.user, args.password, config_dir)
-        config_dir = get_garmin_config_dir(args.user, config_dir)
+        # Setup configuration  
+        config_dir = args.config_dir or f'/storage/garmin/{args.user_id}'
+        build_garmin_config(args.user_id, args.user, args.password, config_dir)
+        config_dir = get_garmin_config_dir(args.user_id, config_dir)
         # Create client and download data
         client = GarminClient(config_dir)
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)

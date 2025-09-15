@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Processors module - Data Processors
+Processors module - Activity and Health Data Processors
 """
 
 from .interface import (
@@ -11,7 +11,8 @@ from .interface import (
     ValidationError, TransformationError, StorageError
 )
 
-from .fit import FitFileProcessor, FitDataValidator, FitDataTransformer
+from .activity import ActivityProcessor, ActivityValidator, ActivityTransformer, ActivityFieldMapper
+from .health import HealthProcessor
 
 __all__ = [
 
@@ -27,5 +28,9 @@ __all__ = [
     'TransformationError', 'StorageError',
     
 
-    'FitFileProcessor', 'FitDataValidator', 'FitDataTransformer'
+    # Activity Processing
+    'ActivityProcessor', 'ActivityValidator', 'ActivityTransformer', 'ActivityFieldMapper',
+    
+    # Health Processing
+    'HealthProcessor'
 ]

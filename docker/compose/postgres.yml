@@ -1,0 +1,47 @@
+version: '3.7'
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION}
+    restart: always
+    deploy:
+      mode: global
+      placement:
+        constraints:
+        - node.role==manager
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - ${ROOT}/storage/postgres_data:/var/lib/postgresql/data:z
+      - ${DOCKER_DIR}/config/postgres/init:/docker-entrypoint-initdb.d:ro,z
+      - ${DOCKER_DIR}/config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro,z
+      - ${DOCKER_DIR}/config/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro,z
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-host=md5 --auth-local=md5"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    networks:
+      - codetrekking
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  codetrekking:
+    external: true

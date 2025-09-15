@@ -1,0 +1,161 @@
+version: '3.8'
+
+networks:
+  codetrekking:
+    external: true
+    name: codetrekking
+
+volumes:
+  garmin_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${GARMIN_STORAGE:-/storage/garmin}
+
+services:
+  peakflow-tasks-worker:
+    image: ${REGISTRY_URL:-localhost:5000}/peakflow-tasks:${WORKER_SERVICE_VERSION:-latest}
+    hostname: peakflow-tasks-worker
+    environment:
+      # RabbitMQ Configuration (from .env)
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-localhost}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USERNAME=${RABBITMQ_DEFAULT_USER:-codetrekking}
+      - RABBITMQ_PASSWORD=${RABBITMQ_DEFAULT_PASS:-ChangeMe}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-codetrekking}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      
+      # Elasticsearch Configuration (from .env)
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-http://localhost:9200}
+      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-elastic}
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-ChangeMe}
+      
+      # Database Configuration (Phase 6 - from .env)
+      - DATABASE_URL=${DATABASE_URL:-postgresql://codetrekking:ChangeMe@postgres:5432/codetrekking}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-codetrekking}
+      - POSTGRES_USER=${POSTGRES_USER:-codetrekking}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ChangeMe}
+      
+      # Encryption Configuration (Phase 6 - from .env)
+      - GARMIN_ENCRYPTION_KEY=${GARMIN_ENCRYPTION_KEY}
+      - GARMIN_ENCRYPTION_VERSION=${GARMIN_ENCRYPTION_VERSION:-1}
+      
+      # PeakFlow Configuration (from .env) - backward compatible
+      - GARMIN_CONFIG_DIR=${GARMIN_CONFIG_DIR:-/storage/garmin}
+      - GARMIN_DATA_DIR=${GARMIN_DATA_DIR:-/storage/garmin}
+      
+      # Worker Configuration (from .env)
+      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-4}
+      - WORKER_LOG_LEVEL=${WORKER_LOG_LEVEL:-INFO}
+    volumes:
+      - garmin_data:/storage/garmin  # Backward compatibility: keep for migration and fallback
+      - ${ROOT:-/home/aiuser/codetrekking}/storage/processed-data:/storage/processed-data
+    networks:
+      - codetrekking
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    command: ["uv", "run", "celery", "-A", "peakflow_tasks.celery_app", "worker", "--loglevel=${WORKER_LOG_LEVEL:-INFO}", "--concurrency=${WORKER_CONCURRENCY:-4}"]
+    healthcheck:
+      test: ["CMD", "uv", "run", "celery", "-A", "peakflow_tasks.celery_app", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  peakflow-tasks-beat:
+    image: ${REGISTRY_URL:-localhost:5000}/peakflow-tasks:${WORKER_SERVICE_VERSION:-latest}
+    hostname: peakflow-tasks-beat
+    environment:
+      # RabbitMQ Configuration (from .env)
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-localhost}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USERNAME=${RABBITMQ_DEFAULT_USER:-codetrekking}
+      - RABBITMQ_PASSWORD=${RABBITMQ_DEFAULT_PASS:-ChangeMe}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-codetrekking}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+      
+      # Elasticsearch Configuration (from .env)
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-http://localhost:9200}
+      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-elastic}
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD:-ChangeMe}
+      
+      # Database Configuration (Phase 6 - from .env)
+      - DATABASE_URL=${DATABASE_URL:-postgresql://codetrekking:ChangeMe@postgres:5432/codetrekking}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-codetrekking}
+      - POSTGRES_USER=${POSTGRES_USER:-codetrekking}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ChangeMe}
+      
+      # Encryption Configuration (Phase 6 - from .env)
+      - GARMIN_ENCRYPTION_KEY=${GARMIN_ENCRYPTION_KEY}
+      - GARMIN_ENCRYPTION_VERSION=${GARMIN_ENCRYPTION_VERSION:-1}
+    networks:
+      - codetrekking
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    command: ["uv", "run", "celery", "-A", "peakflow_tasks.celery_app", "beat", "--loglevel=${WORKER_LOG_LEVEL:-INFO}"]
+
+  peakflow-tasks-flower:
+    image: ${REGISTRY_URL:-localhost:5000}/peakflow-tasks:${WORKER_SERVICE_VERSION:-latest}
+    hostname: peakflow-tasks-flower
+    environment:
+      # RabbitMQ Configuration (from .env)
+      - RABBITMQ_HOST=${RABBITMQ_HOST:-localhost}
+      - RABBITMQ_PORT=${RABBITMQ_PORT:-5672}
+      - RABBITMQ_USERNAME=${RABBITMQ_DEFAULT_USER:-codetrekking}
+      - RABBITMQ_PASSWORD=${RABBITMQ_DEFAULT_PASS:-ChangeMe}
+      - RABBITMQ_VHOST=${RABBITMQ_VHOST:-codetrekking}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+    ports:
+      - "5555:5555"
+    networks:
+      - codetrekking
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    command: ["uv", "run", "celery", "-A", "peakflow_tasks.celery_app", "flower", "--broker=${RABBITMQ_URL}", "--basic_auth=${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}"]

@@ -17,10 +17,10 @@ from .storage.interface import (
 from .storage.elasticsearch import ElasticsearchStorage
 
 # Data processors
-from .processors.fit import FitFileProcessor
+from .processors.activity import ActivityProcessor
+from .processors.health import HealthProcessor
 
-# Analytics and statistics
-from .analytics.advanced import AdvancedStatistics
+# Analytics and statistics (advanced analytics removed)
 
 __version__ = "0.1.0"
 
@@ -34,8 +34,8 @@ __all__ = [
     'ElasticsearchStorage',
     
     # Data processors
-    'FitFileProcessor',
+    'ActivityProcessor',
+    'HealthProcessor',
     
-    # Analytics
-    'AdvancedStatistics',
+# Analytics removed
 ]

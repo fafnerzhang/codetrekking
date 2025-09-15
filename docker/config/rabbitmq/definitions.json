@@ -1,0 +1,219 @@
+{
+  "rabbit_version": "3.13.0",
+  "rabbitmq_version": "3.13.0",
+  "product_name": "RabbitMQ",
+  "product_version": "3.13.0",
+  "vhosts": [
+    {
+      "name": "/"
+    }
+  ],
+  "parameters": [],
+  "global_parameters": [
+    {
+      "name": "cluster_name",
+      "value": "codetrekking@rabbitmq"
+    }
+  ],
+  "policies": [
+    {
+      "vhost": "/",
+      "name": "ha-all",
+      "pattern": ".*",
+      "apply-to": "all",
+      "definition": {
+        "ha-mode": "all",
+        "ha-sync-mode": "automatic"
+      },
+      "priority": 0
+    },
+    {
+      "vhost": "/",
+      "name": "message-ttl",
+      "pattern": "tasks\\..*",
+      "apply-to": "queues",
+      "definition": {
+        "message-ttl": 3600000,
+        "max-length": 10000
+      },
+      "priority": 1
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "tasks.exchange",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "tasks.dlx",
+      "vhost": "/",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "results.exchange",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "tasks.high_priority",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 3600000,
+        "x-max-length": 1000,
+        "x-dead-letter-exchange": "tasks.dlx",
+        "x-dead-letter-routing-key": "dead_letter"
+      }
+    },
+    {
+      "name": "tasks.standard",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 3600000,
+        "x-max-length": 5000,
+        "x-dead-letter-exchange": "tasks.dlx",
+        "x-dead-letter-routing-key": "dead_letter"
+      }
+    },
+    {
+      "name": "tasks.analytics",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 7200000,
+        "x-max-length": 2000,
+        "x-max-priority": 10,
+        "x-dead-letter-exchange": "tasks.dlx",
+        "x-dead-letter-routing-key": "dead_letter"
+      }
+    },
+    {
+      "name": "tasks.results",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 1800000,
+        "x-max-length": 1000
+      }
+    },
+    {
+      "name": "tasks.dead_letter",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-message-ttl": 86400000
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "source": "tasks.exchange",
+      "vhost": "/",
+      "destination": "tasks.high_priority",
+      "destination_type": "queue",
+      "routing_key": "tasks.garmin.setup",
+      "arguments": {}
+    },
+    {
+      "source": "tasks.exchange",
+      "vhost": "/",
+      "destination": "tasks.high_priority",
+      "destination_type": "queue",
+      "routing_key": "tasks.garmin.auth",
+      "arguments": {}
+    },
+    {
+      "source": "tasks.exchange",
+      "vhost": "/",
+      "destination": "tasks.standard",
+      "destination_type": "queue",
+      "routing_key": "tasks.garmin.download",
+      "arguments": {}
+    },
+    {
+      "source": "tasks.exchange",
+      "vhost": "/",
+      "destination": "tasks.standard",
+      "destination_type": "queue",
+      "routing_key": "tasks.fit.process",
+      "arguments": {}
+    },
+    {
+      "source": "tasks.exchange",
+      "vhost": "/",
+      "destination": "tasks.analytics",
+      "destination_type": "queue",
+      "routing_key": "tasks.analytics.*",
+      "arguments": {}
+    },
+    {
+      "source": "tasks.exchange",
+      "vhost": "/",
+      "destination": "tasks.analytics",
+      "destination_type": "queue",
+      "routing_key": "tasks.analytics.comprehensive",
+      "arguments": {}
+    },
+    {
+      "source": "tasks.exchange",
+      "vhost": "/",
+      "destination": "tasks.analytics",
+      "destination_type": "queue",
+      "routing_key": "tasks.analytics.sport-specific",
+      "arguments": {}
+    },
+    {
+      "source": "tasks.exchange",
+      "vhost": "/",
+      "destination": "tasks.analytics",
+      "destination_type": "queue",
+      "routing_key": "tasks.analytics.comparison",
+      "arguments": {}
+    },
+    {
+      "source": "tasks.exchange",
+      "vhost": "/",
+      "destination": "tasks.analytics",
+      "destination_type": "queue",
+      "routing_key": "tasks.analytics.aggregation",
+      "arguments": {}
+    },
+    {
+      "source": "results.exchange",
+      "vhost": "/",
+      "destination": "tasks.results",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "source": "tasks.dlx",
+      "vhost": "/",
+      "destination": "tasks.dead_letter",
+      "destination_type": "queue",
+      "routing_key": "dead_letter",
+      "arguments": {}
+    }
+  ]
+}

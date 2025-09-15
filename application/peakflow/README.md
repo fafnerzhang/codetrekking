@@ -18,6 +18,10 @@ PeakFlow provides a complete solution for fitness enthusiasts and data analysts:
 - 🧹 **Data Processing**: Clean, transform, and enrich your fitness data
 - 📈 **Visualization Ready**: Prepared data for Kibana dashboards and custom analytics
 - ⚡ **Real-time Sync**: Keep your data up-to-date automatically
+- 🎯 **Power Zone Calculator**: Advanced power zone analysis for running and cycling
+- 💓 **Heart Rate Analytics**: Comprehensive heart rate zone calculations
+- 🏃 **Pace Zone Analysis**: Multiple pace zone methodologies for training
+- 📊 **Training Analytics**: TSS, fitness metrics, and performance tracking
 
 ## Installation
 
@@ -77,6 +81,57 @@ The toolkit uses a configuration system that allows you to customize:
 - Data date ranges
 - Directory structures
 - Enabled statistics tracking
+
+## Analytics
+
+PeakFlow includes comprehensive analytics capabilities for detailed training analysis:
+
+### Power Zone Calculator
+
+Calculate training zones based on multiple established methodologies:
+
+```python
+from peakflow.analytics import PowerZoneAnalyzer, PowerZoneMethod
+
+analyzer = PowerZoneAnalyzer()
+
+# Steve Palladino running power zones
+result = analyzer.calculate_power_zones(
+    threshold_power=200.0,  # FTP in watts
+    method=PowerZoneMethod.STEVE_PALLADINO,
+    body_weight=70.0  # kg (optional)
+)
+
+# Access calculated zones
+for zone in result.zones:
+    print(f"Zone {zone.zone_number}: {zone.zone_name}")
+    print(f"Power Range: {zone.power_range[0]:.0f}-{zone.power_range[1]:.0f}W")
+    print(f"Purpose: {zone.purpose}")
+```
+
+**Supported Methods:**
+- **Steve Palladino** (7 zones) - Running power zones based on FTP/CP
+- **Stryd Running** (7 zones) - Stryd-specific running power zones
+- **Cycling FTP** (7 zones) - Traditional cycling power zones
+- **Critical Power** (7 zones) - CP model with W' capacity
+
+### Heart Rate & Pace Zones
+
+```python
+from peakflow.analytics import HeartRateZoneAnalyzer, PaceZoneAnalyzer
+
+# Heart rate zones
+hr_analyzer = HeartRateZoneAnalyzer()
+hr_result = hr_analyzer.calculate_zones(max_hr=190, method="bcf_abcc_wcpp_revised")
+
+# Pace zones  
+pace_analyzer = PaceZoneAnalyzer()
+pace_result = pace_analyzer.calculate_zones(threshold_pace=240, method="jack_daniels")
+```
+
+See the complete documentation:
+- [Power Zones README](POWER_ZONES_README.md)
+- [Pace Zones README](PACE_ZONES_README.md)
 
 ## Requirements
 

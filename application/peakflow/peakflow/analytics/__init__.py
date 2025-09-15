@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Analytics 模組 - 分析與統計
+Analytics
 """
 
 from .interface import (
@@ -11,25 +11,55 @@ from .interface import (
     AnalyticsError, InsufficientDataError, InvalidParameterError, CalculationError
 )
 
-from .elasticsearch import ElasticsearchAnalytics
-from .advanced import AdvancedStatistics
+from .heart_rate_zones import (
+    HeartRateZoneMethod, HeartRateZone, HeartRateZoneResult,
+    HeartRateZoneCalculator, HeartRateZoneAnalyzer
+)
+
+from .pace_zones import (
+    PaceZoneMethod, PaceZone, PaceZoneResult,
+    PaceZoneCalculator, PaceZoneAnalyzer,
+    JackDanielsCalculator, JoeFrielCalculator, PZICalculator,
+    USATCalculator, EightyTwentyCalculator
+)
+
 from .tss import TSSCalculator, TSSAnalyzer
 
+from .power_zones import (
+    PowerZoneMethod, PowerZone, PowerZoneResult,
+    PowerZoneCalculator, PowerZoneAnalyzer,
+    StevePalladinoCalculator, StrydRunningCalculator,
+    CriticalPowerCalculator
+)
+
 __all__ = [
-    # 抽象接口
+    # Interface classes
     'FitnessAnalyzer', 'PowerAnalyzer', 'RunningDynamicsAnalyzer',
     'TrajectoryAnalyzer', 'RecoveryAnalyzer', 'ComparisonAnalyzer', 'CompositeAnalyzer',
     
-    # 數據類型和枚舉
+    # Data structures
     'AnalyticsType', 'AggregationLevel', 'TimeRange', 'AnalyticsFilter',
     'MetricThresholds', 'AnalyticsResult',
     
-    # 異常類型
+    # Exceptions
     'AnalyticsError', 'InsufficientDataError', 'InvalidParameterError', 'CalculationError',
     
-    # 具體實現
-    'ElasticsearchAnalytics', 'AdvancedStatistics',
+    # Heart Rate Zone classes
+    'HeartRateZoneMethod', 'HeartRateZone', 'HeartRateZoneResult',
+    'HeartRateZoneCalculator', 'HeartRateZoneAnalyzer',
     
-    # TSS 功能
-    'TSSCalculator', 'TSSAnalyzer'
+    # Pace Zone classes  
+    'PaceZoneMethod', 'PaceZone', 'PaceZoneResult',
+    'PaceZoneCalculator', 'PaceZoneAnalyzer',
+    'JackDanielsCalculator', 'JoeFrielCalculator', 'PZICalculator',
+    'USATCalculator', 'EightyTwentyCalculator',
+    
+    # TSS classes
+    'TSSCalculator', 'TSSAnalyzer',
+    
+    # Power Zone classes
+    'PowerZoneMethod', 'PowerZone', 'PowerZoneResult',
+    'PowerZoneCalculator', 'PowerZoneAnalyzer',
+    'StevePalladinoCalculator', 'StrydRunningCalculator',
+    'CriticalPowerCalculator'
 ]
