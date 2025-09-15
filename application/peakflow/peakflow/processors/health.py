@@ -385,7 +385,8 @@ class HealthProcessor:
         timestamp_fields = [
             'local_timestamp', 'time_created', 'system_timestamp', 
             'start_time', 'end_time', 'creation_time',
-            'stress_level_time', 'hrv_time', 'sleep_time', 'body_battery_time'
+            'stress_level_time', 'hrv_time', 'sleep_time', 'body_battery_time',
+            'timestamp_16'
         ]
         for field in timestamp_fields:
             if field in message and message[field] is not None:
