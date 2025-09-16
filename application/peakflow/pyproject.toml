@@ -40,6 +40,7 @@ dependencies = [
     "cryptography>=3.4.8",
     "pytest>=8.4.1",
     "garmin-fit-sdk>=21.178.0",
+    "matplotlib>=3.10.6",
 ]
 
 [project.optional-dependencies]

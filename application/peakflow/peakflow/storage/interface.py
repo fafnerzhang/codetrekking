@@ -19,6 +19,7 @@ class DataType(Enum):
     SLEEP_DATA = "sleep_data"  # Sleep tracking data
     HRV_STATUS = "hrv_status"  # Heart rate variability data
     METRICS = "metrics"  # Health metrics data
+    TSS = "tss"  # Training Stress Score data
 
 
 class QueryFilter:

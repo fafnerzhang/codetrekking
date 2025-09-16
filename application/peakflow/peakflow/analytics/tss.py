@@ -336,7 +336,7 @@ class TSSCalculator:
         """
         return self.calculate_running_pace_tss(activity_id, threshold_pace, raw_data)
     
-    def calculate_composite_tss(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None, **kwargs) -> Dict[str, Any]:
+    def calculate_composite_tss(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None, user_id: str = None, **kwargs) -> Dict[str, Any]:
         """
         Calculate TSS using the best available method based on data availability
         
@@ -345,6 +345,7 @@ class TSSCalculator:
         Args:
             activity_id: Activity identifier (used if raw_data is None)
             raw_data: Optional list of record dictionaries containing fitness data
+            user_id: User identifier (used to retrieve stored thresholds)
             **kwargs: Optional parameters for specific TSS calculations
             
         Returns:
@@ -352,11 +353,23 @@ class TSSCalculator:
         """
         results = {}
         
+        # Get user thresholds if user_id is provided
+        user_thresholds = {}
+        if user_id:
+            user_thresholds = self._get_user_thresholds(user_id)
+            logger.debug(f"Retrieved user thresholds for {user_id}: {list(user_thresholds.keys())}")
+        
+        # Merge user thresholds with provided kwargs (kwargs take precedence)
+        ftp = kwargs.get('ftp') or user_thresholds.get('ftp')
+        threshold_hr = kwargs.get('threshold_hr') or user_thresholds.get('threshold_hr')
+        max_hr = kwargs.get('max_hr') or user_thresholds.get('max_hr')
+        threshold_pace = kwargs.get('threshold_pace') or user_thresholds.get('threshold_pace')
+        
         # Try power-based TSS first
         try:
             power_tss = self.calculate_power_tss(
                 activity_id, 
-                ftp=kwargs.get('ftp'),
+                ftp=ftp,
                 raw_data=raw_data
             )
             results['power_tss'] = power_tss
@@ -369,8 +382,8 @@ class TSSCalculator:
         try:
             hr_tss = self.calculate_hr_tss(
                 activity_id,
-                threshold_hr=kwargs.get('threshold_hr'),
-                max_hr=kwargs.get('max_hr'),
+                threshold_hr=threshold_hr,
+                max_hr=max_hr,
                 raw_data=raw_data
             )
             results['hr_tss'] = hr_tss
@@ -384,7 +397,7 @@ class TSSCalculator:
         try:
             pace_tss = self.calculate_running_pace_tss(
                 activity_id,
-                threshold_pace=kwargs.get('threshold_pace'),
+                threshold_pace=threshold_pace,
                 raw_data=raw_data
             )
             results['pace_tss'] = pace_tss
@@ -398,13 +411,370 @@ class TSSCalculator:
             raise InsufficientDataError("No suitable data available for TSS calculation")
         
         results['calculated_at'] = datetime.now()
+        
+        # Add threshold information used
+        results['thresholds_used'] = {
+            'ftp': ftp,
+            'threshold_hr': threshold_hr,
+            'max_hr': max_hr,
+            'threshold_pace': threshold_pace,
+            'source': 'user_indicators' if user_thresholds else 'parameters'
+        }
+        
         return results
+    
+    def _get_user_thresholds(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get user threshold values from stored user indicators
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            Dictionary containing user thresholds
+        """
+        try:
+            user_indicators = self.storage.get_by_id(DataType.USER_INDICATOR, user_id)
+            
+            if user_indicators:
+                return {
+                    'threshold_hr': user_indicators.get('threshold_heart_rate'),
+                    'max_hr': user_indicators.get('max_heart_rate'),
+                    'resting_hr': user_indicators.get('resting_heart_rate'),
+                    'ftp': user_indicators.get('threshold_power'),
+                    'threshold_pace': user_indicators.get('threshold_pace'),
+                    'weight': user_indicators.get('weight'),
+                    'age': user_indicators.get('age'),
+                    'gender': user_indicators.get('gender')
+                }
+        except Exception as e:
+            logger.debug(f"Could not retrieve user thresholds for {user_id}: {str(e)}")
+        
+        return {}
+    
+    def calculate_and_index_tss(self, activity_id: str, user_id: str, **kwargs) -> Dict[str, Any]:
+        """
+        Calculate TSS for an activity and index the results to Elasticsearch
+        
+        Args:
+            activity_id: Activity identifier
+            user_id: User identifier
+            **kwargs: Optional parameters for specific TSS calculations (ftp, threshold_hr, max_hr, threshold_pace)
+            
+        Returns:
+            Dictionary containing TSS calculation results and indexing status
+        """
+        try:
+            # Calculate composite TSS
+            tss_results = self.calculate_composite_tss(activity_id, user_id=user_id, **kwargs)
+            
+            # Get activity context from session data
+            activity_context = self._get_activity_context(activity_id)
+            
+            # Prepare document for indexing
+            tss_doc = self._prepare_tss_document(
+                activity_id=activity_id,
+                user_id=user_id,
+                tss_results=tss_results,
+                activity_context=activity_context
+            )
+            
+            # Index to Elasticsearch
+            doc_id = f"{user_id}_{activity_id}"
+            success = self.storage.index_document(DataType.TSS, doc_id, tss_doc)
+            
+            if success:
+                logger.info(f"✅ Successfully indexed TSS for activity {activity_id}")
+                tss_results['indexing_status'] = 'success'
+                tss_results['doc_id'] = doc_id
+            else:
+                logger.error(f"❌ Failed to index TSS for activity {activity_id}")
+                tss_results['indexing_status'] = 'failed'
+            
+            return tss_results
+            
+        except Exception as e:
+            error_msg = f"Failed to calculate and index TSS for activity {activity_id}: {str(e)}"
+            logger.error(f"❌ {error_msg}")
+            return {
+                'error': error_msg,
+                'indexing_status': 'failed',
+                'activity_id': activity_id,
+                'user_id': user_id,
+                'calculated_at': datetime.now()
+            }
+    
+    def batch_calculate_and_index_tss(self, activities: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
+        """
+        Batch calculate and index TSS for multiple activities
+        
+        Args:
+            activities: List of activities with 'activity_id' and 'user_id'
+            **kwargs: Optional parameters for TSS calculations
+            
+        Returns:
+            Dictionary containing batch processing results
+        """
+        results = {
+            'total': len(activities),
+            'successful': 0,
+            'failed': 0,
+            'details': [],
+            'started_at': datetime.now()
+        }
+        
+        tss_documents = []
+        
+        for activity in activities:
+            try:
+                activity_id = activity['activity_id']
+                user_id = activity['user_id']
+                
+                # Calculate composite TSS
+                tss_results = self.calculate_composite_tss(activity_id, user_id=user_id, **kwargs)
+                
+                # Get activity context
+                activity_context = self._get_activity_context(activity_id)
+                
+                # Prepare document for bulk indexing
+                tss_doc = self._prepare_tss_document(
+                    activity_id=activity_id,
+                    user_id=user_id,
+                    tss_results=tss_results,
+                    activity_context=activity_context
+                )
+                
+                # Add document ID for bulk indexing
+                tss_doc['_id'] = f"{user_id}_{activity_id}"
+                tss_documents.append(tss_doc)
+                
+                results['successful'] += 1
+                results['details'].append({
+                    'activity_id': activity_id,
+                    'user_id': user_id,
+                    'status': 'success',
+                    'tss': tss_results.get('tss', 0),
+                    'primary_method': tss_results.get('primary_method', 'unknown')
+                })
+                
+            except Exception as e:
+                results['failed'] += 1
+                results['details'].append({
+                    'activity_id': activity.get('activity_id', 'unknown'),
+                    'user_id': activity.get('user_id', 'unknown'),
+                    'status': 'failed',
+                    'error': str(e)
+                })
+                logger.error(f"❌ Failed to calculate TSS for activity {activity.get('activity_id', 'unknown')}: {str(e)}")
+        
+        # Bulk index documents
+        if tss_documents:
+            try:
+                indexing_result = self.storage.bulk_index(DataType.TSS, tss_documents)
+                results['indexing_result'] = {
+                    'success_count': indexing_result.success_count,
+                    'failed_count': indexing_result.failed_count,
+                    'errors': indexing_result.errors
+                }
+                logger.info(f"✅ Bulk indexed {indexing_result.success_count} TSS documents")
+            except Exception as e:
+                results['indexing_error'] = str(e)
+                logger.error(f"❌ Bulk indexing failed: {str(e)}")
+        
+        results['completed_at'] = datetime.now()
+        results['duration'] = (results['completed_at'] - results['started_at']).total_seconds()
+        
+        return results
+    
+    def get_tss_by_activity(self, activity_id: str, user_id: str = None) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve TSS data for a specific activity from Elasticsearch
+        
+        Args:
+            activity_id: Activity identifier
+            user_id: User identifier (optional, used for document ID if provided)
+            
+        Returns:
+            TSS data if found, None otherwise
+        """
+        try:
+            if user_id:
+                # Try direct document lookup first
+                doc_id = f"{user_id}_{activity_id}"
+                result = self.storage.get_by_id(DataType.TSS, doc_id)
+                if result:
+                    return result
+            
+            # Fall back to search by activity_id
+            query_filter = (QueryFilter()
+                           .add_term_filter("activity_id", activity_id))
+            
+            if user_id:
+                query_filter.add_term_filter("user_id", user_id)
+            
+            results = self.storage.search(DataType.TSS, query_filter)
+            return results[0] if results else None
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to retrieve TSS for activity {activity_id}: {str(e)}")
+            return None
+    
+    def get_user_tss_history(self, user_id: str, start_date: datetime = None, end_date: datetime = None, limit: int = 1000) -> List[Dict[str, Any]]:
+        """
+        Retrieve TSS history for a user
+        
+        Args:
+            user_id: User identifier
+            start_date: Start date filter
+            end_date: End date filter
+            limit: Maximum number of records to return
+            
+        Returns:
+            List of TSS records
+        """
+        try:
+            query_filter = (QueryFilter()
+                           .add_term_filter("user_id", user_id)
+                           .add_sort("timestamp", ascending=False)
+                           .set_pagination(limit))
+            
+            if start_date or end_date:
+                query_filter.add_date_range("timestamp", start_date, end_date)
+            
+            return self.storage.search(DataType.TSS, query_filter)
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to retrieve TSS history for user {user_id}: {str(e)}")
+            return []
+    
+    def _get_activity_context(self, activity_id: str) -> Dict[str, Any]:
+        """
+        Get activity context information from session data
+        
+        Args:
+            activity_id: Activity identifier
+            
+        Returns:
+            Dictionary containing activity context
+        """
+        try:
+            # Get session data
+            query_filter = (QueryFilter()
+                           .add_term_filter("activity_id", activity_id)
+                           .set_pagination(1))
+            
+            sessions = self.storage.search(DataType.SESSION, query_filter)
+            if sessions:
+                session = sessions[0]
+                return {
+                    'sport': session.get('sport', 'unknown'),
+                    'sub_sport': session.get('sub_sport', ''),
+                    'total_distance': session.get('total_distance', 0),
+                    'total_duration': session.get('total_timer_time', 0),
+                    'total_calories': session.get('total_calories', 0),
+                    'timestamp': session.get('timestamp'),
+                    'start_time': session.get('start_time')
+                }
+        except Exception as e:
+            logger.debug(f"Could not get activity context for {activity_id}: {str(e)}")
+        
+        return {
+            'sport': 'unknown',
+            'sub_sport': '',
+            'total_distance': 0,
+            'total_duration': 0,
+            'total_calories': 0,
+            'timestamp': datetime.now().isoformat(),
+            'start_time': None
+        }
+    
+    def _prepare_tss_document(self, activity_id: str, user_id: str, tss_results: Dict[str, Any], activity_context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Prepare TSS document for indexing
+        
+        Args:
+            activity_id: Activity identifier
+            user_id: User identifier
+            tss_results: TSS calculation results
+            activity_context: Activity context information
+            
+        Returns:
+            Document ready for indexing
+        """
+        doc = {
+            'activity_id': activity_id,
+            'user_id': user_id,
+            'timestamp': activity_context.get('timestamp') or datetime.now().isoformat(),
+            'calculated_at': tss_results.get('calculated_at', datetime.now()).isoformat(),
+            
+            # Activity context
+            'sport': activity_context.get('sport', 'unknown'),
+            'sub_sport': activity_context.get('sub_sport', ''),
+            'total_distance': activity_context.get('total_distance', 0),
+            'total_duration': activity_context.get('total_duration', 0),
+            'total_calories': activity_context.get('total_calories', 0),
+            
+            # Composite TSS info
+            'primary_method': tss_results.get('primary_method', 'unknown'),
+            'primary_tss': tss_results.get('tss', 0),
+            'available_methods': list(tss_results.keys()),
+            
+            # Quality and metadata
+            'quality_score': 1.0,  # Default high quality
+            'confidence': 'high',
+            'warnings': [],
+            'errors': []
+        }
+        
+        # Add power TSS data if available
+        if 'power_tss' in tss_results:
+            power_data = tss_results['power_tss']
+            doc['power_tss'] = {
+                'tss': power_data.get('tss', 0),
+                'normalized_power': power_data.get('normalized_power', 0),
+                'intensity_factor': power_data.get('intensity_factor', 0),
+                'functional_threshold_power': power_data.get('ftp', 0),
+                'duration_hours': power_data.get('duration_hours', 0),
+                'method': 'power'
+            }
+        
+        # Add HR TSS data if available
+        if 'hr_tss' in tss_results:
+            hr_data = tss_results['hr_tss']
+            doc['hr_tss'] = {
+                'tss': hr_data.get('tss', 0),
+                'intensity_factor': hr_data.get('intensity_factor', 0),
+                'threshold_hr': hr_data.get('threshold_hr', 0),
+                'max_hr': hr_data.get('max_hr', 0),
+                'avg_hr': hr_data.get('avg_hr', 0),
+                'duration_hours': hr_data.get('duration_hours', 0),
+                'method': 'heart_rate'
+            }
+        
+        # Add pace TSS data if available
+        if 'pace_tss' in tss_results:
+            pace_data = tss_results['pace_tss']
+            doc['rtss'] = {
+                'tss': pace_data.get('tss', 0),
+                'normalized_pace': pace_data.get('normalized_pace', 0),
+                'intensity_factor': pace_data.get('intensity_factor', 0),
+                'threshold_pace': pace_data.get('threshold_pace', 0),
+                'avg_pace': pace_data.get('avg_pace', 0),
+                'duration_hours': pace_data.get('duration_hours', 0),
+                'method': 'running_pace'
+            }
+        
+        return doc
     
     def _get_power_data(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> List[float]:
         """Get power data for an activity from storage or raw data"""
         if raw_data is not None:
-            # Use provided raw data
-            power_data = [r.get('power', 0) for r in raw_data if r.get('power') and r.get('power') > 0]
+            # Use provided raw data - check multiple power field variations
+            power_data = []
+            for r in raw_data:
+                power_val = self._extract_power_value(r)
+                if power_val and power_val > 0:
+                    power_data.append(power_val)
             return power_data
         
         if activity_id is None:
@@ -416,8 +786,40 @@ class TSSCalculator:
                        .set_pagination(10000))
         
         records = self.storage.search(DataType.RECORD, query_filter)
-        power_data = [r.get('power', 0) for r in records if r.get('power') and r.get('power') > 0]
+        power_data = []
+        for r in records:
+            power_val = self._extract_power_value(r)
+            if power_val and power_val > 0:
+                power_data.append(power_val)
         return power_data
+    
+    def _extract_power_value(self, record: Dict[str, Any]) -> Optional[float]:
+        """Extract power value from a record, checking multiple field name variations"""
+        # Check common power field variations
+        power_fields = ['power', 'Power', 'enhanced_power', 'avg_power']
+        
+        for field in power_fields:
+            if field in record and record[field] is not None:
+                try:
+                    power_val = float(record[field])
+                    if power_val > 0:
+                        return power_val
+                except (ValueError, TypeError):
+                    continue
+        
+        # Check power_fields nested object
+        if 'power_fields' in record and isinstance(record['power_fields'], dict):
+            power_fields_obj = record['power_fields']
+            for field in ['power', 'avg_power']:
+                if field in power_fields_obj and power_fields_obj[field] is not None:
+                    try:
+                        power_val = float(power_fields_obj[field])
+                        if power_val > 0:
+                            return power_val
+                    except (ValueError, TypeError):
+                        continue
+        
+        return None
     
     def _get_heart_rate_data(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> List[int]:
         """Get heart rate data for an activity from storage or raw data"""
@@ -444,9 +846,9 @@ class TSSCalculator:
             # Use provided raw data
             speed_data = []
             for r in raw_data:
-                speed = r.get('speed') or r.get('enhanced_speed')
-                if speed and speed > 0:
-                    speed_data.append(speed)
+                speed_val = self._extract_speed_value(r)
+                if speed_val and speed_val > 0:
+                    speed_data.append(speed_val)
             return speed_data
         
         if activity_id is None:
@@ -461,11 +863,51 @@ class TSSCalculator:
         speed_data = []
         
         for r in records:
-            speed = r.get('speed') or r.get('enhanced_speed')
-            if speed and speed > 0:
-                speed_data.append(speed)
+            speed_val = self._extract_speed_value(r)
+            if speed_val and speed_val > 0:
+                speed_data.append(speed_val)
         
         return speed_data
+    
+    def _extract_speed_value(self, record: Dict[str, Any]) -> Optional[float]:
+        """Extract speed value from a record, checking multiple field name variations"""
+        # Check common speed field variations
+        speed_fields = ['speed', 'enhanced_speed', 'avg_speed']
+        
+        for field in speed_fields:
+            if field in record and record[field] is not None:
+                try:
+                    speed_val = float(record[field])
+                    if speed_val > 0:
+                        return speed_val
+                except (ValueError, TypeError):
+                    continue
+        
+        # Check additional_fields nested object
+        if 'additional_fields' in record and isinstance(record['additional_fields'], dict):
+            additional = record['additional_fields']
+            for field in ['enhanced_speed', 'speed']:
+                if field in additional and additional[field] is not None:
+                    try:
+                        speed_val = float(additional[field])
+                        if speed_val > 0:
+                            return speed_val
+                    except (ValueError, TypeError):
+                        continue
+        
+        # Check speed_metrics nested object
+        if 'speed_metrics' in record and isinstance(record['speed_metrics'], dict):
+            speed_metrics = record['speed_metrics']
+            for field in ['avg_speed', 'speed']:
+                if field in speed_metrics and speed_metrics[field] is not None:
+                    try:
+                        speed_val = float(speed_metrics[field])
+                        if speed_val > 0:
+                            return speed_val
+                    except (ValueError, TypeError):
+                        continue
+        
+        return None
     
     def _get_pace_data(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> List[float]:
         """Get pace data for an activity (converted from speed to min/km) from storage or raw data"""

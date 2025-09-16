@@ -36,6 +36,7 @@ class ElasticsearchStorage(StorageInterface):
             DataType.SLEEP_DATA: "health-sleep-data",
             DataType.HRV_STATUS: "health-hrv-status",
             DataType.METRICS: "health-metrics",
+            DataType.TSS: "fitness-tss",
         }
 
     def initialize(self, config: Dict[str, Any]) -> bool:
@@ -1066,6 +1067,80 @@ class ElasticsearchStorage(StorageInterface):
                     "number_of_shards": 1,
                     "number_of_replicas": 0,
                     "refresh_interval": "30s",
+                },
+            },
+            DataType.TSS: {
+                "mappings": {
+                    "properties": {
+                        # === Basic Information ===
+                        "activity_id": {"type": "keyword"},
+                        "user_id": {"type": "keyword"},
+                        "timestamp": {"type": "date"},
+                        "calculated_at": {"type": "date"},
+                        "indexed_at": {"type": "date"},
+                        
+                        # === TSS Calculations ===
+                        "power_tss": {
+                            "properties": {
+                                "tss": {"type": "float"},
+                                "normalized_power": {"type": "float"},
+                                "intensity_factor": {"type": "float"},
+                                "functional_threshold_power": {"type": "float"},
+                                "duration_hours": {"type": "float"},
+                                "method": {"type": "keyword"},
+                            }
+                        },
+                        "hr_tss": {
+                            "properties": {
+                                "tss": {"type": "float"},
+                                "intensity_factor": {"type": "float"},
+                                "threshold_hr": {"type": "integer"},
+                                "max_hr": {"type": "integer"},
+                                "avg_hr": {"type": "integer"},
+                                "duration_hours": {"type": "float"},
+                                "method": {"type": "keyword"},
+                            }
+                        },
+                        "rtss": {
+                            "properties": {
+                                "tss": {"type": "float"},
+                                "normalized_pace": {"type": "float"},
+                                "intensity_factor": {"type": "float"},
+                                "threshold_pace": {"type": "float"},
+                                "avg_pace": {"type": "float"},
+                                "duration_hours": {"type": "float"},
+                                "method": {"type": "keyword"},
+                            }
+                        },
+                        
+                        # === Composite TSS Results ===
+                        "primary_method": {"type": "keyword"},
+                        "primary_tss": {"type": "float"},
+                        "available_methods": {"type": "keyword"},
+                        
+                        # === Activity Context ===
+                        "sport": {"type": "keyword"},
+                        "sub_sport": {"type": "keyword"},
+                        "total_distance": {"type": "float"},
+                        "total_duration": {"type": "float"},
+                        "total_calories": {"type": "integer"},
+                        
+                        # === Calculation Metadata ===
+                        "data_points": {"type": "integer"},
+                        "quality_score": {"type": "float"},
+                        "confidence": {"type": "keyword"},
+                        "warnings": {"type": "text"},
+                        "errors": {"type": "text"},
+                        
+                        # === Additional Dynamic Fields ===
+                        "additional_fields": {"type": "object", "dynamic": True},
+                    }
+                },
+                "settings": {
+                    "number_of_shards": 1,
+                    "number_of_replicas": 0,
+                    "refresh_interval": "5s",
+                    "index.max_result_window": 100000,
                 },
             },
         }
