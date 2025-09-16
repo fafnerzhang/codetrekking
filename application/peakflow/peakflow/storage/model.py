@@ -1163,8 +1163,8 @@ class MetricsDataModel(HealthDataModel):
     """
     General health metrics data model for various health measurements.
 
-    Based on recovery.md analysis, metrics files contain general health
-    and fitness metrics with device information and temporal data.
+    Enhanced model supporting METRICS.fit files with numeric message types
+    and various fitness and health metrics from Garmin devices.
     """
 
     # Override file_type for metrics
@@ -1176,6 +1176,29 @@ class MetricsDataModel(HealthDataModel):
     recovery_time: Optional[float] = Field(
         None, ge=0, description="Recovery time in hours"
     )
+    
+    # Raw numeric fields from METRICS.fit files (field IDs 0-20)
+    field_0: Optional[float] = Field(None, description="Raw field 0 from metrics message")
+    field_1: Optional[float] = Field(None, description="Raw field 1 from metrics message")
+    field_2: Optional[float] = Field(None, description="Raw field 2 from metrics message")
+    field_3: Optional[float] = Field(None, description="Raw field 3 from metrics message")
+    field_4: Optional[float] = Field(None, description="Raw field 4 from metrics message")
+    field_5: Optional[float] = Field(None, description="Raw field 5 from metrics message")
+    field_6: Optional[float] = Field(None, description="Raw field 6 from metrics message")
+    field_7: Optional[float] = Field(None, description="Raw field 7 from metrics message")
+    field_8: Optional[float] = Field(None, description="Raw field 8 from metrics message")
+    field_9: Optional[float] = Field(None, description="Raw field 9 from metrics message")
+    field_10: Optional[float] = Field(None, description="Raw field 10 from metrics message")
+    field_11: Optional[float] = Field(None, description="Raw field 11 from metrics message")
+    field_12: Optional[float] = Field(None, description="Raw field 12 from metrics message")
+    field_13: Optional[float] = Field(None, description="Raw field 13 from metrics message")
+    field_14: Optional[float] = Field(None, description="Raw field 14 from metrics message")
+    field_15: Optional[float] = Field(None, description="Raw field 15 from metrics message")
+    field_16: Optional[float] = Field(None, description="Raw field 16 from metrics message")
+    field_17: Optional[float] = Field(None, description="Raw field 17 from metrics message")
+    field_18: Optional[float] = Field(None, description="Raw field 18 from metrics message")
+    field_19: Optional[float] = Field(None, description="Raw field 19 from metrics message")
+    field_20: Optional[float] = Field(None, description="Raw field 20 from metrics message")
 
 
 class MonitoringDataModel(HealthDataModel):

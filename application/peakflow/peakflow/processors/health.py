@@ -44,22 +44,55 @@ class HealthProcessor:
             'sleep_data_mesgs': DataType.SLEEP_DATA,
             'sleep_level_mesgs': DataType.SLEEP_DATA,
             'sleep_assessment_mesgs': DataType.SLEEP_DATA,
+            'sleep_disruption_overnight_severity_mesgs': DataType.SLEEP_DATA,
+            'sleep_disruption_severity_period_mesgs': DataType.SLEEP_DATA,
             
             # Wellness and monitoring data
             'wellness_mesgs': DataType.WELLNESS,
             'monitoring_mesgs': DataType.WELLNESS,
+            'monitoring_info_mesgs': DataType.WELLNESS,
+            'monitoring_hr_data_mesgs': DataType.WELLNESS,
             'daily_summary_mesgs': DataType.WELLNESS,
             'stress_level_mesgs': DataType.WELLNESS,
             'body_battery_mesgs': DataType.WELLNESS,
             'health_snapshot_mesgs': DataType.WELLNESS,
+            'respiration_rate_mesgs': DataType.WELLNESS,
+            'ohr_settings_mesgs': DataType.WELLNESS,
             
             # General metrics
             'metrics_mesgs': DataType.METRICS,
             'user_profile_mesgs': DataType.METRICS,
             
-            # Partially decoded messages (still in development)
-            '22': DataType.HRV_STATUS,  # HRV metadata
-            '227': DataType.WELLNESS,   # Stress level data
+            # Numeric message types from different file types
+            # HRV STATUS messages
+            '22': DataType.HRV_STATUS,    # HRV metadata/status
+            
+            # WELLNESS file numeric messages
+            '24': DataType.WELLNESS,      # Detailed monitoring data arrays
+            '279': DataType.WELLNESS,     # Time-based wellness data
+            '233': DataType.WELLNESS,     # Activity/status data
+            '355': DataType.WELLNESS,     # Wellness parameters
+            '407': DataType.WELLNESS,     # Advanced wellness metrics
+            '408': DataType.WELLNESS,     # Real-time wellness data
+            '484': DataType.WELLNESS,     # Additional wellness data
+            
+            # METRICS file messages
+            '241': DataType.METRICS,      # Core metrics data
+            '294': DataType.METRICS,      # Comprehensive metrics
+            '232': DataType.METRICS,      # Status/configuration metrics  
+            '378': DataType.METRICS,      # Performance metrics
+            '339': DataType.METRICS,      # Time-series metrics
+            
+            # SLEEP DATA messages
+            '273': DataType.SLEEP_DATA,   # Sleep session metadata
+            '382': DataType.SLEEP_DATA,   # Sleep stage/movement data
+            
+            # NAP file messages
+            '412': DataType.SLEEP_DATA,   # Nap data
+            
+            # Common infrastructure messages (contain valuable context)
+            'timestamp_correlation_mesgs': DataType.WELLNESS,  # Time synchronization data
+            'event_mesgs': DataType.WELLNESS,                  # Device events during monitoring
         }
 
     async def process_fit_file(self, fit_file_path: str, user_id: str) -> bool:
@@ -225,7 +258,10 @@ class HealthProcessor:
 
     async def _process_hrv_data(self, health_data: Dict, user_id: str, file_path: str) -> List[IndexingResult]:
         """Process HRV-related messages."""
-        hrv_message_types = ['hrv_mesgs', 'hrv_status_summary_mesgs', 'hrv_value_mesgs', 'beat_intervals_mesgs', '22']
+        hrv_message_types = [
+            'hrv_mesgs', 'hrv_status_summary_mesgs', 'hrv_value_mesgs', 
+            'beat_intervals_mesgs', '22'
+        ]
         results = []
         
         for msg_type in hrv_message_types:
@@ -239,7 +275,11 @@ class HealthProcessor:
 
     async def _process_sleep_data(self, health_data: Dict, user_id: str, file_path: str) -> List[IndexingResult]:
         """Process sleep-related messages."""
-        sleep_message_types = ['sleep_mesgs', 'sleep_data_mesgs', 'sleep_level_mesgs', 'sleep_assessment_mesgs']
+        sleep_message_types = [
+            'sleep_mesgs', 'sleep_data_mesgs', 'sleep_level_mesgs', 'sleep_assessment_mesgs',
+            'sleep_disruption_overnight_severity_mesgs', 'sleep_disruption_severity_period_mesgs',
+            '273', '382', '412'  # Sleep data, sleep stages/movement, nap data
+        ]
         results = []
         
         for msg_type in sleep_message_types:
@@ -254,8 +294,10 @@ class HealthProcessor:
     async def _process_wellness_data(self, health_data: Dict, user_id: str, file_path: str) -> List[IndexingResult]:
         """Process wellness and monitoring messages."""
         wellness_message_types = [
-            'wellness_mesgs', 'monitoring_mesgs', 'daily_summary_mesgs', 
-            'stress_level_mesgs', 'body_battery_mesgs', 'health_snapshot_mesgs', '227'
+            'wellness_mesgs', 'monitoring_mesgs', 'monitoring_info_mesgs', 'monitoring_hr_data_mesgs',
+            'daily_summary_mesgs', 'stress_level_mesgs', 'body_battery_mesgs', 'health_snapshot_mesgs',
+            'respiration_rate_mesgs', 'ohr_settings_mesgs', 'timestamp_correlation_mesgs', 'event_mesgs',
+            '24', '279', '233', '355', '407', '408', '484'  # Numeric wellness message types
         ]
         results = []
         
@@ -270,7 +312,11 @@ class HealthProcessor:
 
     async def _process_metrics_data(self, health_data: Dict, user_id: str, file_path: str) -> List[IndexingResult]:
         """Process general health metrics messages."""
-        metrics_message_types = ['metrics_mesgs', 'user_profile_mesgs']
+        metrics_message_types = [
+            'metrics_mesgs', 'user_profile_mesgs',
+            # Numeric message types from METRICS.fit files
+            '241', '294', '232', '378', '339'
+        ]
         results = []
         
         for msg_type in metrics_message_types:
@@ -328,12 +374,70 @@ class HealthProcessor:
         if 'hrv' in message_type.lower():
             if 'summary' in message_type.lower():
                 record['hrv_data_type'] = 'summary'
+                record['health_sub_category'] = 'hrv_summary'
             elif 'value' in message_type.lower():
                 record['hrv_data_type'] = 'measurement'
+                record['health_sub_category'] = 'hrv_measurement'
             elif 'beat' in message_type.lower():
                 record['hrv_data_type'] = 'beat_intervals'
+                record['health_sub_category'] = 'hrv_beat_intervals'
             else:
                 record['hrv_data_type'] = 'timeseries'
+                record['health_sub_category'] = 'hrv_data'
+        elif 'sleep' in message_type.lower():
+            if 'assessment' in message_type.lower():
+                record['health_sub_category'] = 'sleep_assessment'
+            elif 'level' in message_type.lower():
+                record['health_sub_category'] = 'sleep_stages'
+            elif 'disruption' in message_type.lower():
+                record['health_sub_category'] = 'sleep_disruptions'
+            else:
+                record['health_sub_category'] = 'sleep_data'
+        elif 'monitoring' in message_type.lower():
+            if 'info' in message_type.lower():
+                record['health_sub_category'] = 'monitoring_info'
+            elif 'hr' in message_type.lower():
+                record['health_sub_category'] = 'heart_rate_monitoring'
+            else:
+                record['health_sub_category'] = 'activity_monitoring'
+        elif 'stress' in message_type.lower():
+            record['health_sub_category'] = 'stress_level'
+        elif 'respiration' in message_type.lower():
+            record['health_sub_category'] = 'breathing_rate'
+        elif message_type in ['24', '279', '233', '355', '407', '408', '484']:
+            # Numeric wellness message types - add specific sub-categorization
+            numeric_type_mapping = {
+                '24': 'detailed_monitoring_arrays',
+                '279': 'time_based_wellness', 
+                '233': 'activity_status',
+                '355': 'wellness_parameters',
+                '407': 'advanced_wellness_metrics',
+                '408': 'realtime_wellness',
+                '484': 'additional_wellness_data'
+            }
+            record['health_sub_category'] = numeric_type_mapping.get(message_type, 'numeric_wellness_data')
+        elif message_type in ['241', '294', '232', '378', '339']:
+            # Numeric metrics message types
+            numeric_metrics_mapping = {
+                '241': 'core_metrics',
+                '294': 'comprehensive_metrics',
+                '232': 'status_configuration_metrics',
+                '378': 'performance_metrics', 
+                '339': 'time_series_metrics'
+            }
+            record['health_sub_category'] = numeric_metrics_mapping.get(message_type, 'numeric_metrics_data')
+        elif message_type in ['273', '382', '412']:
+            # Sleep-related numeric types
+            sleep_numeric_mapping = {
+                '273': 'sleep_session_metadata',
+                '382': 'sleep_movement_stages',
+                '412': 'nap_data'
+            }
+            record['health_sub_category'] = sleep_numeric_mapping.get(message_type, 'sleep_numeric_data')
+        elif message_type == '22':
+            record['health_sub_category'] = 'hrv_metadata'
+        else:
+            record['health_sub_category'] = health_category
         
         # Add all decoded fields from SDK
         for key, value in data.items():
@@ -576,7 +680,8 @@ class HealthProcessor:
         
         health_indicators = [
             'WELLNESS', 'SLEEP', 'HRV', 'METRICS', 'MONITORING',
-            'BODY_BATTERY', 'STRESS', 'HEALTH', 'DAILY_SUMMARY'
+            'BODY_BATTERY', 'STRESS', 'HEALTH', 'DAILY_SUMMARY',
+            'SLEEP_DATA', 'HRV_STATUS', 'SLEEP_DISRUPTIONS', 'NAP'
         ]
         
         return any(indicator in filename for indicator in health_indicators)
