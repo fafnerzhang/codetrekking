@@ -12,7 +12,7 @@ services:
         - node.role==manager
       resources:
         limits:
-          memory: 4G
+          memory: 2G
       restart_policy:
         condition: none
     volumes:
@@ -42,17 +42,19 @@ services:
       resources:
         limits:
           memory: 8G
+        reservations:
+          memory: 4G
       restart_policy:
-        condition: none
+        condition: on-failure
     volumes:
       - ${DOCKER_DIR}/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro,z
       - ${ROOT}/storage/elasticsearch:/usr/share/elasticsearch/data:z
-      - ${ROOT}/storage/elasticsearch_plugins:/usr/share/elasticsearch/plugins
+      - ${ROOT}/storage/elasticsearch_plugins:/usr/share/elasticsearch/plugins:z
     ports:
-      - "9200:9200"
-      - "9300:9300"
+      - "${ELASTICSEARCH_PORT}:9200"
+      - "${ELASTICSEARCH_TRANSPORT_PORT}:9300"
     environment:
-      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      ES_JAVA_OPTS: -Xms1g -Xmx1g
       ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-}
       discovery.type: single-node
     networks:
@@ -68,18 +70,18 @@ services:
         - node.role==manager
       resources:
         limits:
-          memory: 4G
+          memory: 2G
       restart_policy:
         condition: none
     volumes:
       - ${DOCKER_DIR}/config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro,Z
       - ${DOCKER_DIR}/config/logstash/pipeline:/usr/share/logstash/pipeline:ro,Z
     ports:
-      - "5044:5044"
-      - "5000:5000/tcp"
-      - "5000:5000/udp"
-      - "12201:12201/udp"
-      - "9600:9600"
+      - "${LOGSTASH_PORT}:5044"
+      - "${LOGSTASH_TCP_PORT}:5001/tcp"
+      - "${LOGSTASH_UDP_PORT}:5001/udp"
+      - "${LOGSTASH_GELF_PORT}:12201/udp"
+      - "${LOGSTASH_API_PORT}:9600"
     environment:
       LS_JAVA_OPTS: -Xms256m -Xmx256m
       LOGSTASH_INTERNAL_PASSWORD: ${LOGSTASH_INTERNAL_PASSWORD}
@@ -98,13 +100,13 @@ services:
         - node.role==manager
       resources:
         limits:
-          memory: 4G
+          memory: 2G
       restart_policy:
         condition: on-failure
     volumes:
       - ${DOCKER_DIR}/config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro,Z
     ports:
-      - "5601:5601"
+      - "${KIBANA_PORT}:5601"
     environment:
       KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-}
     networks:
@@ -116,6 +118,16 @@ services:
     user: root
     container_name: filebeat
     image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION}
+    deploy:
+      mode: global
+      placement:
+        constraints:
+        - node.role==manager
+      resources:
+        limits:
+          memory: 2G
+      restart_policy:
+        condition: none
     depends_on:
       - logstash
     volumes:
@@ -151,8 +163,8 @@ services:
 
 networks:
   codetrekking: 
-    driver: overlay
-    attachable: true
+    external: true
+    name: codetrekking
 
 volumes:
   setup:

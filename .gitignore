@@ -1,2 +1,11 @@
 storage/*/
-.env
+*.env
+*.env.dev
+*.env.local
+.vscode/
+*.pem
+*.pyc
+*.instructions.md
+CLAUDE.md
+*copilot-instructions.md
+*.log

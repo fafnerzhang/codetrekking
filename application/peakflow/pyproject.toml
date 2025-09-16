@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peakflow"
+version = "0.1.0"
+description = "A comprehensive fitness data pipeline for Garmin activity extraction, analysis, and visualization"
+readme = "README.md"
+authors = [
+    {name = "PeakFlow Team", email = "team@peakflow.dev"}
+]
+license = "MIT"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Health",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "garmindb>=3.6.4",
+    "garth>=0.5.7",
+    "fitfile>=1.1.10",
+    "fitparse==1.2.0",
+    "numpy>=1.21.0",
+    "pandas>=1.3.0",
+    "pathlib2>=2.3.0",
+    "python-dateutil>=2.8.0",
+    "configparser>=3.7.0",
+    "elasticsearch==9.0.1",
+    "sqlalchemy>=2.0.0,<3.0.0",
+    "idbutils>=1.1.0",
+    "tcxfile>=1.0.4",
+    "cryptography>=3.4.8",
+    "pytest>=8.4.1",
+    "garmin-fit-sdk>=21.178.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=2.0.0",
+    "black>=21.0.0",
+    "flake8>=3.8.0",
+    "mypy>=0.800",
+]
+
+[project.scripts]
+peakflow-download = "peakflow.providers.garmin:main"
+
+[project.urls]
+Homepage = "https://github.com/peakflow-team/peakflow"
+Repository = "https://github.com/peakflow-team/peakflow.git"
+Issues = "https://github.com/peakflow-team/peakflow/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["peakflow*"]
+exclude = ["tests*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

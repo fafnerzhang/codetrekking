@@ -1,0 +1,10 @@
+storage:
+  - elasticsearch
+  - elasticsearch_filebeat
+  - elasticsearch_plugins
+  - garmin_db
+  - portainer_data
+  - rabbitmq_data
+  - docker_registry
+  - postgres_data
+  - minio_data
