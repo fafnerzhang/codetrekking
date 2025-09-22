@@ -2,11 +2,20 @@
 """
 Activity Processor - Processes FIT files for fitness/workout activity data (sessions, laps, records)
 """
-import fitparse
+import re
+import statistics
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Union, IO
 from pathlib import Path
 import time
+
+# Import garmin_fit_sdk only
+try:
+    from garmin_fit_sdk import Decoder, Stream
+    GARMIN_FIT_SDK_AVAILABLE = True
+except ImportError:
+    GARMIN_FIT_SDK_AVAILABLE = False
+    raise ImportError("garmin_fit_sdk is required. Install with: uv add garmin-fit-sdk")
 
 from ..storage.interface import (
     DataType, QueryFilter, AggregationQuery,
@@ -32,7 +41,9 @@ class ActivityFieldMapper:
             'enhanced_', 'total_', 'avg_', 'max_', 'min_', 'start_', 'end_',
             'first_', 'last_', 'best_', 'worst_', 'accumulated_', 'left_', 'right_',
             'combined_', 'normalized_', 'functional_', 'threshold_', 'zone_',
-            'time_in_', 'percent_', 'raw_', 'filtered_', 'smoothed_'
+            'time_in_', 'percent_', 'raw_', 'filtered_', 'smoothed_',
+            # Environmental prefixes discovered in the data
+            'baseline_', 'stryd_', 'air_'
         }
         
         self.known_suffixes = {
@@ -43,7 +54,30 @@ class ActivityFieldMapper:
             '_smoothness', '_balance', '_phase', '_peak', '_count', '_accuracy',
             '_grade', '_resistance', '_expenditure', '_uptake', '_stroke',
             '_strokes', '_lengths', '_pool', '_percent', '_pco', '_change',
-            '_direction', '_pressure', '_humidity', '_wind', '_air', '_barometric'
+            '_direction', '_pressure', '_humidity', '_wind', '_air', '_barometric',
+            # Environmental suffixes
+            '_elevation'
+        }
+        
+        # Specific environmental field names discovered in the data
+        self.environmental_field_names = {
+            # Direct field name mappings (case-insensitive)
+            'baseline temperature': 'baseline_temperature',
+            'baseline humidity': 'baseline_humidity', 
+            'baseline elevation': 'baseline_elevation',
+            'air power': 'air_power',
+            'stryd temperature': 'stryd_temperature',
+            'stryd humidity': 'stryd_humidity',
+            'avg_temperature': 'avg_temperature',
+            'max_temperature': 'max_temperature',
+            'min_temperature': 'min_temperature',
+            'temperature': 'temperature',
+            'humidity': 'humidity',
+            'pressure': 'pressure',
+            'wind_speed': 'wind_speed',
+            'wind_direction': 'wind_direction',
+            'barometric_pressure': 'barometric_pressure',
+            'air_pressure': 'air_pressure'
         }
         
         # Field categories for better organization
@@ -60,17 +94,38 @@ class ActivityFieldMapper:
                              'energy_expenditure', 'oxygen_uptake', 'treadmill_grade'],
             'categorical_fields': ['sport', 'sub_sport', 'intensity', 'lap_trigger', 'event', 'event_type',
                                  'swim_stroke', 'activity_type', 'manufacturer', 'product'],
-            'running_dynamics': ['vertical_oscillation', 'stance_time', 'step_length', 'vertical_ratio',
-                                'ground_contact_time', 'form_power', 'leg_spring_stiffness',
-                                'stance_time_percent', 'vertical_oscillation_percent',
-                                'avg_ground_contact_time', 'avg_vertical_oscillation',
-                                'avg_stance_time', 'avg_step_length', 'avg_vertical_ratio'],
+            'running_dynamics': [
+                # Standard Garmin running dynamics
+                'vertical_oscillation', 'stance_time', 'step_length', 'vertical_ratio',
+                'ground_contact_time', 'stance_time_percent', 'vertical_oscillation_percent',
+                'avg_ground_contact_time', 'avg_vertical_oscillation',
+                'avg_stance_time', 'avg_step_length', 'avg_vertical_ratio',
+                # Stryd running dynamics and biomechanics
+                'ground_time', 'impact_loading_rate', 'leg_spring_stiffness',
+                'duty_factor', 'flight_time', 'form_power',
+                # Advanced cadence and efficiency metrics
+                'cadence', 'step_frequency', 'stride_frequency',
+                # Gait and efficiency ratios
+                'vertical_ratio', 'form_power_ratio',
+                # Additional biomechanical metrics
+                'ground_contact_balance', 'left_right_balance', 'efficiency_score'
+            ],
             'power_fields': ['power', 'normalized_power', 'left_power', 'right_power', 'left_right_balance',
                            'left_torque_effectiveness', 'right_torque_effectiveness',
                            'left_pedal_smoothness', 'right_pedal_smoothness', 'combined_pedal_smoothness',
-                           'functional_threshold_power', 'training_stress_score'],
-            'environmental': ['temperature', 'humidity', 'pressure', 'wind_speed', 'wind_direction',
-                            'air_pressure', 'barometric_pressure'],
+                           'functional_threshold_power', 'training_stress_score', 'air_power',
+                           # Developer power fields (using original FIT field names)
+                           'cp', 'form_power', 'lap_power'],
+            'environmental': [
+                # Standard environmental fields
+                'temperature', 'humidity', 'pressure', 'wind_speed', 'wind_direction',
+                'air_pressure', 'barometric_pressure', 'avg_temperature', 'max_temperature', 'min_temperature',
+                # Developer environmental fields (using original FIT field names)
+                'baseline_temperature', 'baseline_humidity', 'baseline_elevation',
+                'stryd_temperature', 'stryd_humidity', 'impact_loading_rate',
+                # User characteristics (from developer fields)
+                'weight', 'height'
+            ],
             'cycling_fields': ['left_pco', 'right_pco', 'left_power_phase', 'right_power_phase',
                              'left_power_phase_peak', 'right_power_phase_peak', 'gear_change_data'],
             'swimming_fields': ['pool_length', 'lengths', 'stroke_count', 'strokes', 'swolf'],
@@ -88,15 +143,23 @@ class ActivityFieldMapper:
     
     def should_include_field(self, field_name: str) -> bool:
         """Determine if a field should be included based on name patterns"""
-        import re
         
         # Exclude fields matching unknown patterns
         for pattern in self.unknown_patterns:
             if re.match(pattern, field_name.lower()):
                 return False
         
+        # Normalize field name for comparison (handle spaces and mixed case)
+        normalized_name = field_name.lower().replace(' ', '_')
+        
+        # Check if it's a known environmental field
+        if field_name.lower() in self.environmental_field_names:
+            return True
+        if normalized_name in self.environmental_field_names.values():
+            return True
+        
         # Include fields with known prefixes/suffixes
-        field_lower = field_name.lower()
+        field_lower = normalized_name
         for prefix in self.known_prefixes:
             if field_lower.startswith(prefix.lower()):
                 return True
@@ -110,49 +173,83 @@ class ActivityFieldMapper:
             if field_lower in [f.lower() for f in fields]:
                 return True
         
+        # Check for environmental patterns (even if not explicitly listed)
+        environmental_patterns = ['temperature', 'humidity', 'pressure', 'wind', 'air', 'baseline', 'stryd']
+        for pattern in environmental_patterns:
+            if pattern.lower() in field_lower:
+                return True
+        
         # Include simple alphanumeric field names (no strange patterns)
-        if re.match(r'^[a-zA-Z][a-zA-Z0-9_]*$', field_name) and len(field_name) <= 50:
+        if re.match(r'^[a-zA-Z][a-zA-Z0-9_\s]*$', field_name) and len(field_name) <= 50:
             return True
+        
+        return False
         
         return False
     
     def categorize_field(self, field_name: str) -> str:
         """Categorize a field based on its name"""
-        field_lower = field_name.lower()
+        # Normalize field name for comparison (handle spaces and mixed case)
+        normalized_name = field_name.lower().replace(' ', '_')
         
+        # Check power fields first (before environmental to avoid conflicts)
+        power_patterns = [
+            'power', 'watt', 'torque', 'effectiveness', 'smoothness', 'balance', 'phase'
+        ]
+        for pattern in power_patterns:
+            if pattern.lower() in normalized_name:
+                return 'power_fields'
+        
+        # Check if it's a known environmental field 
+        if field_name.lower() in self.environmental_field_names:
+            return 'environmental'
+        if normalized_name in self.environmental_field_names.values():
+            return 'environmental'
+        
+        # Check environmental patterns (but exclude power-related fields)
+        if 'power' not in normalized_name:  # Avoid categorizing power fields as environmental
+            environmental_patterns = [
+                'temperature', 'humidity', 'pressure', 'wind', 'air', 'baseline', 'stryd',
+                'barometric', 'elevation'
+            ]
+            for pattern in environmental_patterns:
+                if pattern.lower() in normalized_name:
+                    return 'environmental'
+        
+        # Check field categories
         for category, fields in self.field_categories.items():
-            if field_lower in [f.lower() for f in fields]:
+            if normalized_name in [f.lower() for f in fields]:
                 return category
         
         # Check prefixes and suffixes for categorization
-        if any(field_lower.startswith(prefix.lower()) for prefix in ['avg_', 'max_', 'min_']):
-            if any(field_lower.endswith(suffix.lower()) for suffix in ['_heart_rate', '_hr']):
+        if any(normalized_name.startswith(prefix.lower()) for prefix in ['avg_', 'max_', 'min_']):
+            if any(normalized_name.endswith(suffix.lower()) for suffix in ['_heart_rate', '_hr']):
                 return 'heart_rate_metrics'
-            elif any(field_lower.endswith(suffix.lower()) for suffix in ['_power']):
+            elif any(normalized_name.endswith(suffix.lower()) for suffix in ['_power']):
                 return 'power_fields'
-            elif any(field_lower.endswith(suffix.lower()) for suffix in ['_speed', '_pace']):
+            elif any(normalized_name.endswith(suffix.lower()) for suffix in ['_speed', '_pace']):
                 return 'speed_metrics'
-            elif any(field_lower.endswith(suffix.lower()) for suffix in ['_cadence']):
+            elif any(normalized_name.endswith(suffix.lower()) for suffix in ['_cadence']):
                 return 'cadence_metrics'
-            elif any(field_lower.endswith(suffix.lower()) for suffix in ['_temperature']):
+            elif any(normalized_name.endswith(suffix.lower()) for suffix in ['_temperature', '_humidity', '_pressure']):
                 return 'environmental'
         
         # Categorize by suffix patterns
-        if any(field_lower.endswith(suffix.lower()) for suffix in ['_oscillation', '_stance', '_contact', '_stiffness']):
+        if any(normalized_name.endswith(suffix.lower()) for suffix in ['_oscillation', '_stance', '_contact', '_stiffness']):
             return 'running_dynamics'
-        elif any(field_lower.endswith(suffix.lower()) for suffix in ['_power', '_effectiveness', '_smoothness', '_balance']):
+        elif any(normalized_name.endswith(suffix.lower()) for suffix in ['_power', '_effectiveness', '_smoothness', '_balance']):
             return 'power_fields'
-        elif any(field_lower.endswith(suffix.lower()) for suffix in ['_zone']):
+        elif any(normalized_name.endswith(suffix.lower()) for suffix in ['_zone']):
             return 'zone_fields'
-        elif any(field_lower.endswith(suffix.lower()) for suffix in ['_time']) and 'zone' in field_lower:
+        elif any(normalized_name.endswith(suffix.lower()) for suffix in ['_time']) and 'zone' in normalized_name:
             return 'time_fields'
-        elif any(field_lower.endswith(suffix.lower()) for suffix in ['_stroke', '_strokes', '_length', '_pool']):
+        elif any(normalized_name.endswith(suffix.lower()) for suffix in ['_stroke', '_strokes', '_length', '_pool']):
             return 'swimming_fields'
-        elif any(field_lower.endswith(suffix.lower()) for suffix in ['_humidity', '_pressure', '_wind', '_air']):
+        elif any(normalized_name.endswith(suffix.lower()) for suffix in ['_humidity', '_pressure', '_wind', '_air', '_elevation']):
             return 'environmental'
-        elif any(field_lower.startswith(prefix.lower()) for prefix in ['left_', 'right_']) and 'power' in field_lower:
+        elif any(normalized_name.startswith(prefix.lower()) for prefix in ['left_', 'right_']) and 'power' in normalized_name:
             return 'power_fields'
-        elif any(field_lower.startswith(prefix.lower()) for prefix in ['left_', 'right_']) and any(x in field_lower for x in ['pco', 'phase']):
+        elif any(normalized_name.startswith(prefix.lower()) for prefix in ['left_', 'right_']) and any(x in normalized_name for x in ['pco', 'phase']):
             return 'cycling_fields'
         
         return 'general'
@@ -174,6 +271,9 @@ class ActivityFieldMapper:
             if not self.should_include_field(field_name):
                 continue
             
+            # Normalize field name for environmental mapping
+            normalized_field_name = self._normalize_field_name(field_name)
+            
             # Process different field types
             processed_value = self._process_field_value(field_name, field_value)
             category = self.categorize_field(field_name)
@@ -181,19 +281,19 @@ class ActivityFieldMapper:
             if category in ['time_fields', 'gps_fields', 'numeric_fields', 'categorical_fields']:
                 # Direct mapping to document root
                 if category == 'time_fields' and hasattr(processed_value, 'isoformat'):
-                    doc[field_name] = processed_value.isoformat()
+                    doc[normalized_field_name] = processed_value.isoformat()
                 elif category == 'gps_fields':
-                    self._handle_gps_field(doc, field_name, processed_value)
+                    self._handle_gps_field(doc, normalized_field_name, processed_value)
                 else:
-                    doc[field_name] = processed_value
+                    doc[normalized_field_name] = processed_value
             elif category == 'general':
                 # Store general fields in additional_fields to preserve all valid data
-                additional_fields[field_name] = processed_value
+                additional_fields[normalized_field_name] = processed_value
             else:
                 # Group into categories
                 if category not in categorized_fields:
                     categorized_fields[category] = {}
-                categorized_fields[category][field_name] = processed_value
+                categorized_fields[category][normalized_field_name] = processed_value
         
         # Add categorized fields to document
         for category, fields in categorized_fields.items():
@@ -205,6 +305,17 @@ class ActivityFieldMapper:
             doc['additional_fields'] = additional_fields
         
         return doc
+    
+    def _normalize_field_name(self, field_name: str) -> str:
+        """Normalize field name for consistent mapping"""
+        # Check if it's a known environmental field that needs mapping
+        field_lower = field_name.lower()
+        if field_lower in self.environmental_field_names:
+            return self.environmental_field_names[field_lower]
+        
+        # Convert spaces to underscores and make lowercase for consistency
+        normalized = field_name.lower().replace(' ', '_')
+        return normalized
     
     def _process_field_value(self, field_name: str, field_value: Any) -> Any:
         """Process field value based on field type"""
@@ -256,6 +367,59 @@ class ActivityFieldMapper:
             # Convert from semicircles to degrees if needed
             coord = field_value * (180 / 2**31) if isinstance(field_value, int) and abs(field_value) > 180 else field_value
             doc[location_key]['lon'] = coord
+
+    def aggregate_record_power_data(self, fit_file, session_doc: Dict[str, Any]) -> Dict[str, Any]:
+        """Aggregate power data from record messages to enhance session data"""
+        try:
+            records = list(fit_file.get_messages('record'))
+            if not records:
+                return session_doc
+            
+            # Collect power values from records
+            power_data = {
+                'air_power': [],
+                'power': [],
+                'form_power': []
+            }
+            
+            for record in records:
+                for field in record.fields:
+                    if field.value is not None:
+                        field_name_lower = field.name.lower().replace(' ', '_')
+                        
+                        if field_name_lower in power_data and field.value > 0:
+                            power_data[field_name_lower].append(field.value)
+            
+            # Calculate statistics for each power type
+            power_stats = {}
+            for power_type, values in power_data.items():
+                if values:
+                    power_stats[power_type] = {
+                        f'avg_{power_type}': sum(values) / len(values),
+                        f'max_{power_type}': max(values),
+                        f'min_{power_type}': min(values)
+                    }
+            
+            # Add power statistics to session document
+            if power_stats:
+                if 'power_fields' not in session_doc:
+                    session_doc['power_fields'] = {}
+                
+                # Flatten the power stats into power_fields
+                for power_type, stats in power_stats.items():
+                    session_doc['power_fields'].update(stats)
+                
+                # Also add to additional_fields for reference
+                if 'additional_fields' not in session_doc:
+                    session_doc['additional_fields'] = {}
+                session_doc['additional_fields']['record_power_aggregated'] = True
+                session_doc['additional_fields']['power_record_count'] = len(records)
+            
+            return session_doc
+            
+        except Exception as e:
+            # Don't fail the entire extraction if power aggregation fails
+            return session_doc
 
 
 class ActivityValidator(DataValidator):
@@ -456,16 +620,7 @@ class ActivityProcessor(FitnessFileProcessor):
                 return result
             
             # Process fitness FIT file
-            if isinstance(source, (str, Path)):
-                fit_file_path = str(source)
-                if not Path(fit_file_path).exists():
-                    result.status = ProcessingStatus.FAILED
-                    result.add_error(f"Fitness FIT file not found: {fit_file_path}")
-                    return result
-                
-                fit = fitparse.FitFile(fit_file_path)
-            else:
-                fit = fitparse.FitFile(source)
+            fit = self._parse_fit_file(source)
             
             # Process different data types
             session_result = self.process_session_data(fit, activity_id, user_id)
@@ -521,50 +676,166 @@ class ActivityProcessor(FitnessFileProcessor):
                 # Check file extension
                 if not str(source).lower().endswith('.fit'):
                     return False
-                
-                # Try to open file
-                fit = fitparse.FitFile(str(source))
-                # Try to read one message to validate
-                try:
-                    next(fit.get_messages())
-                except StopIteration:
-                    # File is valid but empty, which is okay
-                    pass
-            else:
-                fit = fitparse.FitFile(source)
-                # Try to read one message to validate
-                try:
-                    next(fit.get_messages())
-                except StopIteration:
-                    # File is valid but empty, which is okay
-                    pass
+            
+            # Try to parse with Garmin SDK
+            fit = self._parse_fit_file(source)
+            
+            # Validate by checking if we can get messages
+            try:
+                messages_iter = fit.get_messages()
+                next(messages_iter)
+            except (StopIteration, AttributeError):
+                # File is valid but might be empty, which is okay
+                pass
             
             return True
         except Exception as e:
             logger.warning(f"Fitness FIT file validation failed: {e}")
             return False
     
+    def _parse_fit_file(self, source: Union[str, Path, IO]):
+        """Parse FIT file using Garmin SDK only"""
+        if not GARMIN_FIT_SDK_AVAILABLE:
+            raise RuntimeError("garmin_fit_sdk is required. Install with: uv add garmin-fit-sdk")
+        
+        return self._parse_with_garmin_sdk(source)
+    
+    def _parse_with_garmin_sdk(self, source: Union[str, Path, IO]):
+        """Parse FIT file with garmin_fit_sdk"""
+        if isinstance(source, (str, Path)):
+            stream = Stream.from_file(str(source))
+        else:
+            # For file-like objects, read the content
+            content = source.read()
+            source.seek(0)  # Reset position for potential future reads
+            stream = Stream.from_byte_array(content)
+        
+        decoder = Decoder(stream)
+        messages, errors = decoder.read()
+        
+        if errors:
+            logger.warning(f"Garmin FIT SDK parsing errors: {errors}")
+        
+        # Create a precise wrapper for Garmin SDK messages
+        class GarminSDKWrapper:
+            def __init__(self, messages_dict):
+                self.messages_dict = messages_dict
+                self.all_messages = []
+                
+                # Process each message type from Garmin SDK
+                for key, value in messages_dict.items():
+                    if key.endswith('_mesgs') and isinstance(value, list):
+                        # Extract message type name (remove '_mesgs' suffix)
+                        msg_type = key[:-6]  # Remove '_mesgs'
+                        
+                        for msg_data in value:
+                            if isinstance(msg_data, dict):
+                                wrapped_msg = GarminMessage(msg_type, msg_data)
+                                self.all_messages.append(wrapped_msg)
+            
+            def get_messages(self, message_type=None):
+                """Get messages, optionally filtered by type"""
+                if message_type is None:
+                    return iter(self.all_messages)
+                
+                # Filter by message type
+                filtered = []
+                for msg in self.all_messages:
+                    if msg.name == message_type:
+                        filtered.append(msg)
+                return iter(filtered)
+        
+        class GarminMessage:
+            """Wrapper for Garmin SDK message to match expected interface"""
+            def __init__(self, name, data):
+                self.name = name
+                self.fields = []
+                self.developer_fields = {}
+                
+                # Convert message data to field objects
+                if isinstance(data, dict):
+                    for field_name, field_value in data.items():
+                        if field_value is not None:
+                            # Handle developer fields specially
+                            if field_name == 'developer_fields' and isinstance(field_value, dict):
+                                self.developer_fields = field_value
+                                # Also add developer fields as regular fields with meaningful names
+                                self._add_developer_fields_as_fields(field_value)
+                            else:
+                                field = GarminField(field_name, field_value)
+                                self.fields.append(field)
+            
+            def _add_developer_fields_as_fields(self, developer_fields):
+                """Add developer fields as regular fields with meaningful names"""
+                # Build field mapping based on field definitions found in FIT file
+                # Using original field names from FIT specification (cleaner, without units)
+                # Based on actual FIT file analysis with complete Stryd field mapping
+                developer_field_mapping = {
+                    # Session developer fields (from field definitions)
+                    0: 'cp',                     # CP (Critical Power)
+                    1: 'baseline_humidity',      # Baseline Humidity
+                    2: 'baseline_temperature',   # Baseline Temperature  
+                    3: 'baseline_elevation',     # Baseline Elevation
+                    4: 'weight',                 # Weight
+                    5: 'height',                 # Height
+                    
+                    # Record developer fields (from field definitions analysis)
+                    6: 'lap_power',              # Lap Power
+                    7: 'stryd_humidity',         # Stryd Humidity (dynamic reading)
+                    8: 'stryd_temperature',      # Stryd Temperature (dynamic reading)
+                    9: 'air_power',              # Air Power
+                    10: 'form_power',            # Form Power
+                    11: 'power',                 # Power (primary power reading)
+                    12: 'power_field_unknown',   # Unknown power-related field (always 0)
+                    13: 'vertical_oscillation',  # Vertical Oscillation
+                    14: 'ground_time',           # Ground Time / Ground Contact Time
+                    15: 'leg_spring_stiffness',  # Leg Spring Stiffness
+                    16: 'impact_loading_rate'    # Impact Loading Rate
+                }
+                
+                for dev_field_id, dev_field_value in developer_fields.items():
+                    if dev_field_value is not None:
+                        # Get meaningful name or fallback to ID-based name
+                        if dev_field_id in developer_field_mapping:
+                            field_name = developer_field_mapping[dev_field_id]
+                        else:
+                            field_name = f'developer_field_{dev_field_id}'
+                        
+                        # Add as a regular field so it gets processed by field mapper
+                        field = GarminField(field_name, dev_field_value)
+                        self.fields.append(field)
+        
+        class GarminField:
+            """Wrapper for Garmin SDK field to match expected interface"""
+            def __init__(self, name, value):
+                self.name = str(name) if name is not None else ""
+                self.value = value
+        
+        return GarminSDKWrapper(messages)
+
+
     def extract_metadata(self, source: Union[str, Path, IO]) -> Dict[str, Any]:
         """Extract fitness FIT file metadata"""
         metadata = {}
         
         try:
+            fit = self._parse_fit_file(source)
+            
             if isinstance(source, (str, Path)):
-                fit = fitparse.FitFile(str(source))
                 metadata["file_path"] = str(source)
                 metadata["file_size"] = Path(source).stat().st_size
-            else:
-                fit = fitparse.FitFile(source)
             
-            # Extract file information
+            # Extract file information using Garmin SDK format
             file_id_messages = list(fit.get_messages('file_id'))
             if file_id_messages:
                 file_id = file_id_messages[0]
-                for field in file_id.fields:
-                    if field.value is not None:
-                        metadata[f"file_{field.name}"] = field.value
+                # Handle Garmin SDK message format
+                if hasattr(file_id, 'fields'):
+                    for field in file_id.fields:
+                        if field.value is not None:
+                            metadata[f"file_{field.name}"] = field.value
             
-            # Count message types
+            # Count message types using Garmin SDK
             message_counts = {}
             for message in fit.get_messages():
                 msg_type = message.name

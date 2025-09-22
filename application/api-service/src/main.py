@@ -15,7 +15,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import structlog
 
-from .routes import auth, garmin, garmin_credentials, tasks, monitoring
+from .routes import auth, garmin, garmin_credentials, tasks, monitoring, analytics
 
 # from .middleware.logging import LoggingMiddleware, RequestResponseLogger  # Not implemented yet
 from peakflow_tasks.api import TaskManager
@@ -222,7 +222,7 @@ app.include_router(auth.router)
 app.include_router(garmin.router)
 app.include_router(garmin_credentials.router)  # Phase 5: Credential management
 app.include_router(tasks.router)
-# Analytics router removed
+app.include_router(analytics.router)  # Analytics endpoints
 app.include_router(monitoring.router)
 
 

@@ -30,9 +30,6 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1/garmin", tags=["garmin"])
 
 
-# download-data endpoint removed - use complete-sync instead for comprehensive workflow
-
-
 @router.post("/complete-sync", response_model=TaskResponse)
 async def complete_garmin_sync(
     request: Request,

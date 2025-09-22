@@ -72,6 +72,12 @@ class AppSettings(BaseSettings):
     elasticsearch_host: str = Field(
         default="http://localhost:9200", description="Elasticsearch host URL"
     )
+    elasticsearch_user: str = Field(
+        default="elastic", alias="ELASTIC_USER", description="Elasticsearch username"
+    )
+    elasticsearch_password: str = Field(
+        default="", alias="ELASTIC_PASSWORD", description="Elasticsearch password"
+    )
     elasticsearch_index_prefix: str = Field(
         default="codetrekking", description="Elasticsearch index prefix"
     )

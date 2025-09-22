@@ -495,6 +495,19 @@ class ElasticsearchStorage(StorageInterface):
                                 "avg_ground_contact_time": {"type": "float"},
                                 "stance_time_percent": {"type": "float"},
                                 "vertical_oscillation_percent": {"type": "float"},
+                                # === Advanced Running Dynamics ===
+                                "ground_time": {"type": "float"},
+                                "impact_loading_rate": {"type": "float"},
+                                "leg_spring_stiffness": {"type": "float"},
+                                "duty_factor": {"type": "float"},
+                                "flight_time": {"type": "float"},
+                                "ground_contact_balance": {"type": "float"},
+                                "efficiency_score": {"type": "float"},
+                                "vertical_oscillation": {"type": "float"},
+                                "stance_time": {"type": "float"},
+                                "step_length": {"type": "float"},
+                                "vertical_ratio": {"type": "float"},
+                                "ground_contact_time": {"type": "float"},
                             }
                         },
                         # === Power Statistics ===
@@ -509,6 +522,17 @@ class ElasticsearchStorage(StorageInterface):
                                 "avg_left_torque_effectiveness": {"type": "float"},
                                 "avg_right_torque_effectiveness": {"type": "float"},
                                 "avg_combined_pedal_smoothness": {"type": "float"},
+                                # === Advanced Power Fields ===
+                                "air_power": {"type": "integer"},
+                                "form_power": {"type": "integer"},
+                                "lap_power": {"type": "integer"},
+                                "cp": {"type": "integer"},  # Critical Power from developer fields
+                                "avg_air_power": {"type": "float"},
+                                "max_air_power": {"type": "integer"},
+                                "min_air_power": {"type": "integer"},
+                                "avg_form_power": {"type": "float"},
+                                "max_form_power": {"type": "integer"},
+                                "min_form_power": {"type": "integer"},
                             }
                         },
                         # === Heart Rate Metrics ===
@@ -540,6 +564,21 @@ class ElasticsearchStorage(StorageInterface):
                                 "pressure": {"type": "float"},
                                 "wind_speed": {"type": "float"},
                                 "wind_direction": {"type": "float"},
+                                # === Device-Specific Environmental ===
+                                "baseline_temperature": {"type": "float"},
+                                "baseline_humidity": {"type": "float"},
+                                "baseline_elevation": {"type": "float"},
+                                "stryd_temperature": {"type": "float"},
+                                "stryd_humidity": {"type": "float"},
+                                "air_pressure": {"type": "float"},
+                                "barometric_pressure": {"type": "float"},
+                            }
+                        },
+                        # === Body/User Metrics ===
+                        "body_metrics": {
+                            "properties": {
+                                "weight": {"type": "float"},
+                                "height": {"type": "float"},
                             }
                         },
                         # === Swimming Fields ===
@@ -611,6 +650,13 @@ class ElasticsearchStorage(StorageInterface):
                                 "leg_spring_stiffness": {"type": "float"},
                                 "stance_time_percent": {"type": "float"},
                                 "vertical_oscillation_percent": {"type": "float"},
+                                # === Advanced Running Dynamics ===
+                                "ground_time": {"type": "float"},
+                                "impact_loading_rate": {"type": "float"},
+                                "duty_factor": {"type": "float"},
+                                "flight_time": {"type": "float"},
+                                "ground_contact_balance": {"type": "float"},
+                                "efficiency_score": {"type": "float"},
                             }
                         },
                         # === Power Data ===
@@ -625,6 +671,11 @@ class ElasticsearchStorage(StorageInterface):
                                 "left_pedal_smoothness": {"type": "float"},
                                 "right_pedal_smoothness": {"type": "float"},
                                 "combined_pedal_smoothness": {"type": "float"},
+                                # === Advanced Power Fields ===
+                                "air_power": {"type": "integer"},
+                                "form_power": {"type": "integer"},
+                                "lap_power": {"type": "integer"},
+                                "cp": {"type": "integer"},  # Critical Power
                             }
                         },
                         # === Cycling Fields ===
@@ -649,6 +700,19 @@ class ElasticsearchStorage(StorageInterface):
                                 "wind_direction": {"type": "float"},
                                 "air_pressure": {"type": "float"},
                                 "barometric_pressure": {"type": "float"},
+                                # === Device-Specific Environmental ===
+                                "baseline_temperature": {"type": "float"},
+                                "baseline_humidity": {"type": "float"},
+                                "baseline_elevation": {"type": "float"},
+                                "stryd_temperature": {"type": "float"},
+                                "stryd_humidity": {"type": "float"},
+                            }
+                        },
+                        # === Body/User Metrics ===
+                        "body_metrics": {
+                            "properties": {
+                                "weight": {"type": "float"},
+                                "height": {"type": "float"},
                             }
                         },
                         # === Swimming Fields ===
@@ -745,6 +809,19 @@ class ElasticsearchStorage(StorageInterface):
                                 "avg_ground_contact_time": {"type": "float"},
                                 "stance_time_percent": {"type": "float"},
                                 "vertical_oscillation_percent": {"type": "float"},
+                                # === Advanced Running Dynamics ===
+                                "ground_time": {"type": "float"},
+                                "impact_loading_rate": {"type": "float"},
+                                "leg_spring_stiffness": {"type": "float"},
+                                "duty_factor": {"type": "float"},
+                                "flight_time": {"type": "float"},
+                                "ground_contact_balance": {"type": "float"},
+                                "efficiency_score": {"type": "float"},
+                                "vertical_oscillation": {"type": "float"},
+                                "stance_time": {"type": "float"},
+                                "step_length": {"type": "float"},
+                                "vertical_ratio": {"type": "float"},
+                                "ground_contact_time": {"type": "float"},
                             }
                         },
                         # === Power Statistics ===
@@ -757,6 +834,17 @@ class ElasticsearchStorage(StorageInterface):
                                 "avg_left_torque_effectiveness": {"type": "float"},
                                 "avg_right_torque_effectiveness": {"type": "float"},
                                 "avg_combined_pedal_smoothness": {"type": "float"},
+                                # === Advanced Power Fields ===
+                                "air_power": {"type": "integer"},
+                                "form_power": {"type": "integer"},
+                                "lap_power": {"type": "integer"},
+                                "cp": {"type": "integer"},  # Critical Power
+                                "avg_air_power": {"type": "float"},
+                                "max_air_power": {"type": "integer"},
+                                "min_air_power": {"type": "integer"},
+                                "avg_form_power": {"type": "float"},
+                                "max_form_power": {"type": "integer"},
+                                "min_form_power": {"type": "integer"},
                             }
                         },
                         # === Heart Rate Metrics ===
@@ -785,6 +873,23 @@ class ElasticsearchStorage(StorageInterface):
                                 "min_temperature": {"type": "float"},
                                 "humidity": {"type": "float"},
                                 "pressure": {"type": "float"},
+                                # === Device-Specific Environmental ===
+                                "baseline_temperature": {"type": "float"},
+                                "baseline_humidity": {"type": "float"},
+                                "baseline_elevation": {"type": "float"},
+                                "stryd_temperature": {"type": "float"},
+                                "stryd_humidity": {"type": "float"},
+                                "air_pressure": {"type": "float"},
+                                "barometric_pressure": {"type": "float"},
+                                "wind_speed": {"type": "float"},
+                                "wind_direction": {"type": "float"},
+                            }
+                        },
+                        # === Body/User Metrics ===
+                        "body_metrics": {
+                            "properties": {
+                                "weight": {"type": "float"},
+                                "height": {"type": "float"},
                             }
                         },
                         # === Swimming Fields ===

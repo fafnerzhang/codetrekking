@@ -374,3 +374,70 @@ class GarminCredentialTestResponse(BaseModel):
     error_details: Optional[str] = Field(
         None, description="Error details if test failed"
     )
+
+
+# Analytics Response Models
+
+
+class ZonePercentage(BaseModel):
+    """Power/pace zone percentage breakdown."""
+
+    zone_1: float = Field(..., description="Percentage of time in zone 1")
+    zone_2: float = Field(..., description="Percentage of time in zone 2")
+    zone_3: float = Field(..., description="Percentage of time in zone 3")
+    zone_4: float = Field(..., description="Percentage of time in zone 4")
+    zone_5: float = Field(..., description="Percentage of time in zone 5")
+
+
+class HealthMetrics(BaseModel):
+    """Health metrics summary."""
+
+    avg_hrv: Optional[float] = Field(None, description="Average HRV")
+    avg_resting_heart_rate: Optional[int] = Field(None, description="Average resting heart rate")
+    avg_health_score: Optional[float] = Field(None, description="Average health score")
+    stress_score: Optional[float] = Field(None, description="Average stress score")
+    sleep_score: Optional[float] = Field(None, description="Average sleep score")
+
+
+class WeeklyActivitySummary(BaseModel):
+    """7-day activity snapshot response."""
+
+    user_id: str = Field(..., description="User identifier")
+    total_distance: float = Field(..., description="Total distance in km")
+    total_tss: float = Field(..., description="Total Training Stress Score")
+    total_time: int = Field(..., description="Total activity time in seconds")
+    activity_count: int = Field(..., description="Number of activities")
+    zone_percentages: ZonePercentage = Field(..., description="Zone distribution")
+    health_metrics: HealthMetrics = Field(..., description="Health metrics summary")
+    date_range: Dict[str, str] = Field(..., description="Date range of data")
+
+
+class LapData(BaseModel):
+    """Single lap data."""
+
+    lap_number: int = Field(..., description="Lap number")
+    distance: float = Field(..., description="Lap distance in km")
+    time: int = Field(..., description="Lap time in seconds")
+    avg_power: Optional[float] = Field(None, description="Average power in watts")
+    avg_pace: Optional[float] = Field(None, description="Average pace in min/km")
+    avg_heart_rate: Optional[int] = Field(None, description="Average heart rate")
+    zone: Optional[int] = Field(None, description="Primary zone for this lap")
+
+
+class ActivityDetailResponse(BaseModel):
+    """Single activity detail response."""
+
+    activity_id: str = Field(..., description="Activity identifier")
+    user_id: str = Field(..., description="User identifier")
+    name: str = Field(..., description="Activity name")
+    description: Optional[str] = Field(None, description="Activity description")
+    sport: str = Field(..., description="Sport type")
+    distance: float = Field(..., description="Distance in km")
+    time: int = Field(..., description="Activity time in seconds")
+    tss: Optional[float] = Field(None, description="Training Stress Score")
+    zone_percentages: ZonePercentage = Field(..., description="Zone distribution")
+    lap_data: List[LapData] = Field(..., description="Lap breakdown")
+    last_night_hrv: Optional[float] = Field(None, description="Previous night HRV")
+    last_night_resting_hr: Optional[int] = Field(None, description="Previous night resting HR")
+    last_night_health_score: Optional[float] = Field(None, description="Previous night health score")
+    timestamp: datetime = Field(..., description="Activity timestamp")
