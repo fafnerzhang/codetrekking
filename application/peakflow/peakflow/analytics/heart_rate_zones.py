@@ -104,10 +104,27 @@ class HeartRateZoneResult:
 
 class HeartRateZoneCalculator(ABC):
     """Abstract base class for heart rate zone calculators"""
-    
+
     @abstractmethod
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
-        """Calculate heart rate zones based on maximum heart rate"""
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
+        """
+        Calculate heart rate zones using provided parameters
+
+        Args:
+            max_heart_rate: Maximum heart rate in BPM
+            resting_heart_rate: Resting heart rate in BPM
+            lthr: Lactate threshold heart rate in BPM
+            age: Age in years
+
+        Returns:
+            HeartRateZoneResult with calculated zones
+        """
         pass
     
     @staticmethod
@@ -171,8 +188,19 @@ class BCFABCCWCPPRevisedCalculator(HeartRateZoneCalculator):
     used by British Cycling.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate BCF/ABCC/WCPP Revised 7-zone system"""
+        if max_heart_rate is None and age is None:
+            raise InvalidParameterError("Either max_heart_rate or age must be provided")
+
+        if max_heart_rate is None:
+            max_heart_rate = self.estimate_max_heart_rate(age)
         zones = [
             self._create_zone(
                 1, "Recovery", 0, 60, max_heart_rate,
@@ -256,8 +284,19 @@ class PeterKeenCalculator(HeartRateZoneCalculator):
     and was used with Chris Boardman and other elite British cyclists.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate Peter Keen 4-zone system"""
+        if max_heart_rate is None and age is None:
+            raise InvalidParameterError("Either max_heart_rate or age must be provided")
+
+        if max_heart_rate is None:
+            max_heart_rate = self.estimate_max_heart_rate(age)
         zones = [
             self._create_zone(
                 1, "Active Recovery", 0, 77, max_heart_rate,
@@ -319,8 +358,19 @@ class RicSternCalculator(HeartRateZoneCalculator):
     training zones for comprehensive fitness development.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate Ric Stern 7-zone system"""
+        if max_heart_rate is None and age is None:
+            raise InvalidParameterError("Either max_heart_rate or age must be provided")
+
+        if max_heart_rate is None:
+            max_heart_rate = self.estimate_max_heart_rate(age)
         zones = [
             self._create_zone(
                 1, "Active Recovery", 0, 68, max_heart_rate,
@@ -402,8 +452,19 @@ class SallyEdwardsCalculator(HeartRateZoneCalculator):
     practical training zones for fitness and performance.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate Sally Edwards 5-zone system"""
+        if max_heart_rate is None and age is None:
+            raise InvalidParameterError("Either max_heart_rate or age must be provided")
+
+        if max_heart_rate is None:
+            max_heart_rate = self.estimate_max_heart_rate(age)
         zones = [
             self._create_zone(
                 1, "Healthy Heart", 50, 60, max_heart_rate,
@@ -471,8 +532,19 @@ class TimexCalculator(HeartRateZoneCalculator):
     and heart rate monitors.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate Timex 5-zone system"""
+        if max_heart_rate is None and age is None:
+            raise InvalidParameterError("Either max_heart_rate or age must be provided")
+
+        if max_heart_rate is None:
+            max_heart_rate = self.estimate_max_heart_rate(age)
         zones = [
             self._create_zone(
                 1, "Warm-up", 50, 60, max_heart_rate,
@@ -540,8 +612,19 @@ class MyProCoachCalculator(HeartRateZoneCalculator):
     percentages for structured training.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate MyProCoach 5-zone system"""
+        if max_heart_rate is None and age is None:
+            raise InvalidParameterError("Either max_heart_rate or age must be provided")
+
+        if max_heart_rate is None:
+            max_heart_rate = self.estimate_max_heart_rate(age)
         zones = [
             self._create_zone(
                 1, "Recovery", 68, 73, max_heart_rate,
@@ -604,17 +687,10 @@ class MyProCoachCalculator(HeartRateZoneCalculator):
 class LactateThresholdZoneCalculator(HeartRateZoneCalculator):
     """
     Abstract base class for lactate threshold-based heart rate zone calculators
-    
+
     These calculators use Lactate Threshold Heart Rate (LTHR) as the reference
     point for zone calculation rather than maximum heart rate.
     """
-    
-    def calculate_zones_from_lthr(self, lthr: int, age: Optional[int] = None) -> HeartRateZoneResult:
-        """Calculate heart rate zones based on lactate threshold heart rate"""
-        # Convert LTHR to estimated max heart rate for compatibility
-        # LTHR is typically 85-90% of max HR for trained athletes
-        estimated_max_hr = int(lthr / 0.87)  # Use 87% as average
-        return self.calculate_zones(estimated_max_hr, age)
     
     def _calculate_hr_from_lthr_percentage(self, lthr: int, percentage: float) -> int:
         """Calculate heart rate from percentage of lactate threshold heart rate"""
@@ -649,56 +725,77 @@ class JoeFrielCalculator(LactateThresholdZoneCalculator):
     for activities without sport-specific zones.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
-        """Calculate Joe Friel general 7-zone system based on estimated LTHR"""
-        # Estimate LTHR from max HR (typically 85-87% of max HR)
-        estimated_lthr = int(max_heart_rate * 0.86)
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
+        """Calculate Joe Friel general 7-zone system"""
+        # Priority: LTHR > max_heart_rate + age estimation
+        if lthr is None:
+            if max_heart_rate is None and age is None:
+                raise InvalidParameterError("Either lthr, max_heart_rate, or age must be provided")
+
+            if max_heart_rate is None:
+                max_heart_rate = self.estimate_max_heart_rate(age)
+
+            # Estimate LTHR from max HR (typically 86% for Joe Friel)
+            lthr = int(max_heart_rate * 0.86)
+            logger.warning(f"Using estimated LTHR {lthr} from max HR {max_heart_rate}. For accurate zones, provide actual threshold HR.")
+
+        # Estimate max HR from LTHR for reference (LTHR is typically 86% of max HR)
+        if max_heart_rate is None:
+            estimated_max_hr = int(lthr / 0.86)
+        else:
+            estimated_max_hr = max_heart_rate
         
         zones = [
             self._create_lthr_zone(
-                1, "Recovery", 0, 85, estimated_lthr,
+                1, "Recovery", 0, 85, lthr,
                 "Active recovery and very light aerobic activity",
                 "Promote recovery and maintain basic aerobic function",
                 ["Enhanced recovery", "Improved circulation", "Stress reduction", "Fat utilization"],
                 "30-90 minutes", "Very easy, comfortable conversation"
             ),
             self._create_lthr_zone(
-                2, "Aerobic", 85, 89, estimated_lthr,
+                2, "Aerobic", 85, 89, lthr,
                 "Fundamental aerobic base training intensity",
                 "Build aerobic capacity and enhance fat metabolism",
                 ["Improved aerobic enzymes", "Enhanced fat oxidation", "Increased capillary density"],
                 "45-150 minutes", "Easy, conversation possible with minimal effort"
             ),
             self._create_lthr_zone(
-                3, "Tempo", 90, 94, estimated_lthr,
+                3, "Tempo", 90, 94, lthr,
                 "Moderate aerobic intensity for endurance development",
                 "Improve aerobic efficiency and lactate clearance",
                 ["Enhanced lactate clearance", "Improved cardiac efficiency", "Better oxygen utilization"],
                 "20-90 minutes", "Moderate, conversation requires focus"
             ),
             self._create_lthr_zone(
-                4, "Lactate Threshold", 95, 99, estimated_lthr,
-                "Training at or near lactate threshold intensity",
+                4, "Lactate Threshold", 95, 99, lthr,
+                "Training at or just below lactate threshold",
                 "Develop threshold power and lactate tolerance",
-                ["Increased threshold power", "Enhanced lactate buffering", "Improved race preparation"],
+                ["Increased threshold capacity", "Enhanced lactate buffering", "Improved time trial performance"],
                 "8-40 minutes", "Hard, focused breathing required"
             ),
             self._create_lthr_zone(
-                5, "VO2max (5a)", 100, 102, estimated_lthr,
-                "High aerobic power development at VO2max intensity",
-                "Develop maximum aerobic power and oxygen uptake",
-                ["Increased VO2max", "Enhanced aerobic power", "Improved maximum oxygen uptake"],
-                "3-8 minutes in intervals", "Very hard, conversation impossible"
+                5, "VO2max (5a)", 100, 102, lthr,
+                "High-intensity aerobic intervals",
+                "Develop maximum aerobic power",
+                ["Increased VO2max", "Enhanced aerobic power", "Improved lactate tolerance"],
+                "3-8 minutes in intervals", "Very hard, near maximum sustainable"
             ),
             self._create_lthr_zone(
-                6, "Anaerobic (5b)", 103, 106, estimated_lthr,
-                "Anaerobic capacity training above VO2max",
-                "Develop anaerobic power and lactate tolerance",
-                ["Enhanced anaerobic capacity", "Improved lactate tolerance", "Increased power output"],
-                "30 seconds to 3 minutes", "Extremely hard, maximum sustainable effort"
+                6, "Anaerobic (5b)", 103, 106, lthr,
+                "Anaerobic capacity and speed endurance training",
+                "Develop anaerobic power and speed",
+                ["Enhanced anaerobic capacity", "Improved speed endurance", "Better finishing capability"],
+                "30 seconds to 3 minutes", "Extremely hard, unsustainable"
             ),
             self._create_lthr_zone(
-                7, "Neuromuscular (5c)", 107, 120, estimated_lthr,
+                7, "Neuromuscular (5c)", 107, 120, lthr,
                 "Maximum neuromuscular power development",
                 "Develop sprint power and neuromuscular coordination",
                 ["Enhanced neuromuscular power", "Improved sprint capability", "Maximum power development"],
@@ -709,14 +806,13 @@ class JoeFrielCalculator(LactateThresholdZoneCalculator):
         return HeartRateZoneResult(
             method=HeartRateZoneMethod.JOE_FRIEL,
             method_name="Joe Friel (7 zones)",
-            max_heart_rate=max_heart_rate,
+            max_heart_rate=estimated_max_hr,
             age=age,
             zones=zones,
             method_description=(
-                "Joe Friel's general 7-zone heart rate system is based on lactate threshold "
-                "heart rate and is designed for endurance training across multiple sports. "
-                "This system provides a comprehensive framework for training from recovery "
-                "to maximum neuromuscular power development."
+                "Joe Friel's general 7-zone heart rate system using actual lactate threshold "
+                "heart rate. This provides more accurate zones based on individual physiology "
+                "rather than estimated values."
             ),
             recommendations=[
                 "Spend 80% of training time in zones 1-2 for aerobic base development",
@@ -736,56 +832,77 @@ class JoeFrielRunningCalculator(LactateThresholdZoneCalculator):
     optimized for running physiology and biomechanics.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate Joe Friel running-specific 7-zone system"""
-        # Estimate LTHR from max HR - running LTHR tends to be slightly higher
-        estimated_lthr = int(max_heart_rate * 0.87)
+        # Priority: LTHR > max_heart_rate + age estimation
+        if lthr is None:
+            if max_heart_rate is None and age is None:
+                raise InvalidParameterError("Either lthr, max_heart_rate, or age must be provided")
+
+            if max_heart_rate is None:
+                max_heart_rate = self.estimate_max_heart_rate(age)
+
+            # Estimate LTHR from max HR - running LTHR tends to be slightly higher (87%)
+            lthr = int(max_heart_rate * 0.87)
+            logger.warning(f"Using estimated LTHR {lthr} from max HR {max_heart_rate}. For accurate zones, provide actual threshold HR.")
+
+        # Estimate max HR from LTHR for reference (running LTHR is typically 87% of max HR)
+        if max_heart_rate is None:
+            estimated_max_hr = int(lthr / 0.87)
+        else:
+            estimated_max_hr = max_heart_rate
         
         zones = [
             self._create_lthr_zone(
-                1, "Recovery", 0, 85, estimated_lthr,
+                1, "Recovery", 0, 85, lthr,
                 "Active recovery running for restoration",
                 "Promote recovery between harder running sessions",
                 ["Enhanced recovery", "Improved running economy", "Reduced muscle tension"],
                 "30-60 minutes", "Very easy, should feel restorative"
             ),
             self._create_lthr_zone(
-                2, "Aerobic", 85, 89, estimated_lthr,
-                "Fundamental aerobic running base development",
+                2, "Aerobic", 85, 89, lthr,
+                "Fundamental aerobic running base",
                 "Build aerobic capacity and running efficiency",
-                ["Improved running economy", "Enhanced fat oxidation", "Increased mitochondrial density"],
-                "45-120 minutes", "Easy conversational pace"
+                ["Improved running economy", "Enhanced fat oxidation", "Better biomechanics"],
+                "45-120 minutes", "Easy, comfortable conversation pace"
             ),
             self._create_lthr_zone(
-                3, "Tempo", 90, 94, estimated_lthr,
-                "Comfortably hard aerobic running",
-                "Improve lactate clearance and running efficiency",
-                ["Enhanced lactate clearance", "Improved running economy", "Better pace judgment"],
-                "20-60 minutes", "Comfortably hard, focused effort"
+                3, "Tempo", 90, 94, lthr,
+                "Steady aerobic running effort",
+                "Improve lactate clearance and running rhythm",
+                ["Enhanced lactate clearance", "Improved running efficiency", "Better pacing"],
+                "20-60 minutes", "Moderately hard, comfortably hard"
             ),
             self._create_lthr_zone(
-                4, "Lactate Threshold", 95, 99, estimated_lthr,
+                4, "Lactate Threshold", 95, 99, lthr,
                 "Running at lactate threshold pace",
-                "Develop threshold running power and speed",
-                ["Increased threshold pace", "Enhanced lactate buffering", "Improved race preparation"],
-                "8-40 minutes", "Hard sustained effort"
+                "Develop threshold pace and lactate tolerance",
+                ["Increased threshold pace", "Enhanced lactate buffering", "Improved tempo runs"],
+                "8-40 minutes", "Hard, focused effort at threshold"
             ),
             self._create_lthr_zone(
-                5, "VO2max (5a)", 100, 102, estimated_lthr,
+                5, "VO2max (5a)", 100, 102, lthr,
                 "VO2max running intervals",
                 "Develop maximum aerobic power for running",
                 ["Increased VO2max", "Enhanced aerobic power", "Improved running speed"],
                 "3-8 minutes in intervals", "Very hard, near maximum effort"
             ),
             self._create_lthr_zone(
-                6, "Anaerobic (5b)", 103, 106, estimated_lthr,
+                6, "Anaerobic (5b)", 103, 106, lthr,
                 "Anaerobic running capacity training",
                 "Develop speed and anaerobic power",
                 ["Enhanced anaerobic capacity", "Improved speed endurance", "Better kick"],
                 "30 seconds to 2 minutes", "Extremely hard, unsustainable"
             ),
             self._create_lthr_zone(
-                7, "Neuromuscular (5c)", 107, 120, estimated_lthr,
+                7, "Neuromuscular (5c)", 107, 120, lthr,
                 "Sprint and neuromuscular power development",
                 "Develop maximum running speed and power",
                 ["Enhanced running speed", "Improved neuromuscular coordination", "Sprint development"],
@@ -796,13 +913,13 @@ class JoeFrielRunningCalculator(LactateThresholdZoneCalculator):
         return HeartRateZoneResult(
             method=HeartRateZoneMethod.JOE_FRIEL_RUNNING,
             method_name="Joe Friel for Running (7 zones)",
-            max_heart_rate=max_heart_rate,
+            max_heart_rate=estimated_max_hr,
             age=age,
             zones=zones,
             method_description=(
-                "Joe Friel's running-specific 7-zone system is optimized for running "
-                "training. It accounts for the specific physiological and biomechanical "
-                "demands of running, with zones calibrated for running-specific adaptations."
+                "Joe Friel's running-specific 7-zone system using actual lactate threshold "
+                "heart rate. This provides more accurate zones based on individual running "
+                "physiology rather than estimated values."
             ),
             recommendations=[
                 "Build base with 80% of weekly mileage in zones 1-2",
@@ -822,56 +939,77 @@ class JoeFrielCyclingCalculator(LactateThresholdZoneCalculator):
     and The Triathlete's Training Bible.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate Joe Friel cycling-specific 7-zone system"""
-        # Estimate LTHR from max HR - cycling LTHR tends to be lower than running
-        estimated_lthr = int(max_heart_rate * 0.85)
+        # Priority: LTHR > max_heart_rate + age estimation
+        if lthr is None:
+            if max_heart_rate is None and age is None:
+                raise InvalidParameterError("Either lthr, max_heart_rate, or age must be provided")
+
+            if max_heart_rate is None:
+                max_heart_rate = self.estimate_max_heart_rate(age)
+
+            # Estimate LTHR from max HR - cycling LTHR tends to be lower (85%)
+            lthr = int(max_heart_rate * 0.85)
+            logger.warning(f"Using estimated LTHR {lthr} from max HR {max_heart_rate}. For accurate zones, provide actual threshold HR.")
+
+        # Estimate max HR from LTHR for reference (cycling LTHR is typically 85% of max HR)
+        if max_heart_rate is None:
+            estimated_max_hr = int(lthr / 0.85)
+        else:
+            estimated_max_hr = max_heart_rate
         
         zones = [
             self._create_lthr_zone(
-                1, "Recovery", 0, 81, estimated_lthr,
+                1, "Recovery", 0, 81, lthr,
                 "Active recovery cycling for restoration",
                 "Promote recovery and maintain pedaling skills",
                 ["Enhanced recovery", "Improved pedaling efficiency", "Reduced leg tension"],
                 "30-90 minutes", "Very easy, spin to recover"
             ),
             self._create_lthr_zone(
-                2, "Aerobic", 81, 89, estimated_lthr,
+                2, "Aerobic", 81, 89, lthr,
                 "Fundamental aerobic cycling base",
                 "Build aerobic capacity and cycling efficiency",
                 ["Improved cycling economy", "Enhanced fat oxidation", "Better pedaling technique"],
                 "60-180 minutes", "Easy, comfortable conversation"
             ),
             self._create_lthr_zone(
-                3, "Tempo", 90, 93, estimated_lthr,
+                3, "Tempo", 90, 93, lthr,
                 "Steady aerobic cycling effort",
                 "Improve lactate clearance and cycling efficiency",
                 ["Enhanced lactate clearance", "Improved cycling economy", "Better pacing skills"],
                 "20-90 minutes", "Moderately hard, sustainable"
             ),
             self._create_lthr_zone(
-                4, "Lactate Threshold", 94, 99, estimated_lthr,
+                4, "Lactate Threshold", 94, 99, lthr,
                 "Cycling at functional threshold power",
                 "Develop threshold power and lactate tolerance",
                 ["Increased FTP", "Enhanced lactate buffering", "Improved time trial performance"],
                 "8-40 minutes", "Hard, focused concentration required"
             ),
             self._create_lthr_zone(
-                5, "VO2max (5a)", 100, 102, estimated_lthr,
+                5, "VO2max (5a)", 100, 102, lthr,
                 "VO2max cycling intervals",
                 "Develop maximum aerobic power",
                 ["Increased VO2max", "Enhanced aerobic power", "Improved climbing ability"],
                 "3-8 minutes in intervals", "Very hard, near maximum"
             ),
             self._create_lthr_zone(
-                6, "Anaerobic (5b)", 103, 106, estimated_lthr,
+                6, "Anaerobic (5b)", 103, 106, lthr,
                 "Anaerobic cycling capacity",
                 "Develop anaerobic power and speed",
                 ["Enhanced anaerobic capacity", "Improved sprint power", "Better attack capability"],
                 "30 seconds to 3 minutes", "Extremely hard effort"
             ),
             self._create_lthr_zone(
-                7, "Neuromuscular (5c)", 107, 120, estimated_lthr,
+                7, "Neuromuscular (5c)", 107, 120, lthr,
                 "Sprint and neuromuscular power",
                 "Develop maximum cycling power and speed",
                 ["Enhanced sprint power", "Improved neuromuscular recruitment", "Maximum power output"],
@@ -882,13 +1020,13 @@ class JoeFrielCyclingCalculator(LactateThresholdZoneCalculator):
         return HeartRateZoneResult(
             method=HeartRateZoneMethod.JOE_FRIEL_CYCLING,
             method_name="Joe Friel for Cycling (7 zones)",
-            max_heart_rate=max_heart_rate,
+            max_heart_rate=estimated_max_hr,
             age=age,
             zones=zones,
             method_description=(
-                "Joe Friel's cycling-specific 7-zone system is designed for cycling "
-                "training with zones optimized for cycling physiology. The system "
-                "accounts for the power-based nature of cycling and specific adaptations."
+                "Joe Friel's cycling-specific 7-zone system using actual lactate threshold "
+                "heart rate. This provides more accurate zones based on individual cycling "
+                "physiology rather than estimated values."
             ),
             recommendations=[
                 "Build aerobic base with 70-80% of training in zones 1-2",
@@ -908,42 +1046,63 @@ class AndyCogganCalculator(LactateThresholdZoneCalculator):
     "Training and Racing with a Power Meter" by Hunter Allen and Andy Coggan.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate Andy Coggan 5-zone heart rate system"""
-        # Estimate LTHR from max HR - Coggan zones typically use ~86% for LTHR
-        estimated_lthr = int(max_heart_rate * 0.86)
+        # Priority: LTHR > max_heart_rate + age estimation
+        if lthr is None:
+            if max_heart_rate is None and age is None:
+                raise InvalidParameterError("Either lthr, max_heart_rate, or age must be provided")
+
+            if max_heart_rate is None:
+                max_heart_rate = self.estimate_max_heart_rate(age)
+
+            # Estimate LTHR from max HR (typically 86% for Coggan zones)
+            lthr = int(max_heart_rate * 0.86)
+            logger.warning(f"Using estimated LTHR {lthr} from max HR {max_heart_rate}. For accurate zones, provide actual threshold HR.")
+
+        # Estimate max HR from LTHR for reference (LTHR is typically 86% of max HR for Coggan zones)
+        if max_heart_rate is None:
+            estimated_max_hr = int(lthr / 0.86)
+        else:
+            estimated_max_hr = max_heart_rate
         
         zones = [
             self._create_lthr_zone(
-                1, "Active Recovery", 0, 68, estimated_lthr,
+                1, "Active Recovery", 0, 68, lthr,
                 "Very light activity for active recovery",
                 "Promote recovery and maintain basic fitness",
                 ["Enhanced recovery", "Improved circulation", "Basic aerobic maintenance"],
                 "30-90 minutes", "Very easy, minimal effort"
             ),
             self._create_lthr_zone(
-                2, "Endurance", 69, 83, estimated_lthr,
+                2, "Endurance", 69, 83, lthr,
                 "Basic aerobic endurance training",
                 "Build aerobic base and improve fat utilization",
                 ["Improved aerobic capacity", "Enhanced fat oxidation", "Increased capillary density"],
                 "60-300 minutes", "Easy, comfortable conversation"
             ),
             self._create_lthr_zone(
-                3, "Tempo", 84, 94, estimated_lthr,
+                3, "Tempo", 84, 94, lthr,
                 "Aerobic threshold and tempo training",
                 "Improve aerobic capacity and lactate clearance",
                 ["Enhanced lactate clearance", "Improved aerobic power", "Better endurance"],
                 "20-90 minutes", "Moderately hard, some concentration needed"
             ),
             self._create_lthr_zone(
-                4, "Lactate Threshold", 95, 105, estimated_lthr,
+                4, "Lactate Threshold", 95, 105, lthr,
                 "Lactate threshold and functional threshold training",
                 "Develop threshold power and lactate tolerance",
                 ["Increased threshold power", "Enhanced lactate buffering", "Improved race performance"],
                 "8-40 minutes", "Hard, focused breathing pattern"
             ),
             self._create_lthr_zone(
-                5, "VO2max", 106, 120, estimated_lthr,
+                5, "VO2max", 106, 120, lthr,
                 "VO2max and anaerobic capacity training",
                 "Develop maximum aerobic and anaerobic power",
                 ["Increased VO2max", "Enhanced anaerobic capacity", "Maximum power development"],
@@ -954,14 +1113,13 @@ class AndyCogganCalculator(LactateThresholdZoneCalculator):
         return HeartRateZoneResult(
             method=HeartRateZoneMethod.ANDY_COGGAN,
             method_name="Andy Coggan (5 zones)",
-            max_heart_rate=max_heart_rate,
+            max_heart_rate=estimated_max_hr,
             age=age,
             zones=zones,
             method_description=(
-                "The Andy Coggan 5-zone heart rate system corresponds to the widely-used "
-                "power training zones from 'Training and Racing with a Power Meter'. "
-                "This system provides a simplified but effective approach to training "
-                "intensity distribution."
+                "The Andy Coggan 5-zone heart rate system using actual lactate threshold "
+                "heart rate, corresponding to the power zones from 'Training and Racing "
+                "with a Power Meter'. This provides more accurate zones based on individual physiology."
             ),
             recommendations=[
                 "Spend majority of training time in zones 1-2",
@@ -981,49 +1139,68 @@ class USATRunningCalculator(LactateThresholdZoneCalculator):
     designed for running training in triathlon context.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate USAT running-specific 6-zone system"""
-        # Estimate LTHR from max HR
-        estimated_lthr = int(max_heart_rate * 0.87)
+        # Priority: LTHR > max_heart_rate + age estimation
+        if lthr is None:
+            if max_heart_rate is None and age is None:
+                raise InvalidParameterError("Either lthr, max_heart_rate, or age must be provided")
+
+            if max_heart_rate is None:
+                max_heart_rate = self.estimate_max_heart_rate(age)
+
+            # Estimate LTHR from max HR (87% for USAT running)
+            lthr = int(max_heart_rate * 0.87)
+            logger.warning(f"Using estimated LTHR {lthr} from max HR {max_heart_rate}. For accurate zones, provide actual threshold HR.")
+
+        # Use provided max_heart_rate or estimate from LTHR
+        if max_heart_rate is None:
+            max_heart_rate = int(lthr / 0.87)
         
         zones = [
             self._create_lthr_zone(
-                1, "Easy", 50, 65, estimated_lthr,
+                1, "Easy", 50, 65, lthr,
                 "Very light aerobic training",
                 "Active recovery and base aerobic development",
                 ["Enhanced recovery", "Basic aerobic fitness", "Fat utilization"],
                 "30-120 minutes", "Very comfortable, easy conversation"
             ),
             self._create_lthr_zone(
-                2, "Moderate", 65, 80, estimated_lthr,
+                2, "Moderate", 65, 80, lthr,
                 "Moderate aerobic training intensity",
                 "Build aerobic base and endurance",
                 ["Improved aerobic capacity", "Enhanced endurance", "Better fat oxidation"],
                 "45-180 minutes", "Comfortable, conversation possible"
             ),
             self._create_lthr_zone(
-                3, "Threshold", 80, 90, estimated_lthr,
+                3, "Threshold", 80, 90, lthr,
                 "Aerobic threshold training",
                 "Improve lactate clearance and aerobic power",
                 ["Enhanced lactate clearance", "Improved aerobic threshold", "Better endurance"],
                 "20-60 minutes", "Moderately hard, controlled breathing"
             ),
             self._create_lthr_zone(
-                4, "Lactate Threshold", 90, 100, estimated_lthr,
+                4, "Lactate Threshold", 90, 100, lthr,
                 "Lactate threshold and tempo training",
                 "Develop lactate threshold and race pace",
                 ["Increased lactate threshold", "Enhanced race preparation", "Improved pace tolerance"],
                 "10-40 minutes", "Hard, focused effort required"
             ),
             self._create_lthr_zone(
-                5, "VO2max", 100, 110, estimated_lthr,
+                5, "VO2max", 100, 110, lthr,
                 "VO2max and high aerobic power",
                 "Develop maximum aerobic power",
                 ["Increased VO2max", "Enhanced aerobic power", "Improved speed"],
                 "2-8 minutes in intervals", "Very hard, near maximum"
             ),
             self._create_lthr_zone(
-                6, "Anaerobic", 110, 120, estimated_lthr,
+                6, "Anaerobic", 110, 120, lthr,
                 "Anaerobic power and speed development",
                 "Develop anaerobic capacity and speed",
                 ["Enhanced anaerobic capacity", "Improved speed", "Better sprint capability"],
@@ -1060,56 +1237,75 @@ class EightyTwentyRunningCalculator(LactateThresholdZoneCalculator):
     emphasizing 80% low intensity and 20% high intensity training.
     """
     
-    def calculate_zones(self, max_heart_rate: int, age: Optional[int] = None) -> HeartRateZoneResult:
+    def calculate_zones(
+        self,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> HeartRateZoneResult:
         """Calculate 80/20 Running 7-zone system"""
-        # Estimate LTHR from max HR
-        estimated_lthr = int(max_heart_rate * 0.87)
+        # Priority: LTHR > max_heart_rate + age estimation
+        if lthr is None:
+            if max_heart_rate is None and age is None:
+                raise InvalidParameterError("Either lthr, max_heart_rate, or age must be provided")
+
+            if max_heart_rate is None:
+                max_heart_rate = self.estimate_max_heart_rate(age)
+
+            # Estimate LTHR from max HR (87% for 80/20 running)
+            lthr = int(max_heart_rate * 0.87)
+            logger.warning(f"Using estimated LTHR {lthr} from max HR {max_heart_rate}. For accurate zones, provide actual threshold HR.")
+
+        # Use provided max_heart_rate or estimate from LTHR
+        if max_heart_rate is None:
+            max_heart_rate = int(lthr / 0.87)
         
         zones = [
             self._create_lthr_zone(
-                1, "Recovery", 0, 81, estimated_lthr,
+                1, "Recovery", 0, 81, lthr,
                 "Active recovery and very easy aerobic activity",
                 "Promote recovery and maintain aerobic function",
                 ["Enhanced recovery", "Active restoration", "Improved circulation"],
                 "30-90 minutes", "Very easy, restorative feel"
             ),
             self._create_lthr_zone(
-                2, "Aerobic Base", 81, 89, estimated_lthr,
+                2, "Aerobic Base", 81, 89, lthr,
                 "Fundamental aerobic base development",
                 "Build aerobic capacity and fat burning efficiency",
                 ["Improved aerobic capacity", "Enhanced fat oxidation", "Better endurance"],
                 "45-180 minutes", "Easy, comfortable conversation pace"
             ),
             self._create_lthr_zone(
-                3, "Moderate Aerobic", 90, 94, estimated_lthr,
+                3, "Moderate Aerobic", 90, 94, lthr,
                 "Moderate aerobic training - generally avoided in 80/20",
                 "Limited use in polarized training model",
                 ["Moderate aerobic development", "Lactate clearance improvement"],
                 "Limited use", "Moderate - generally avoided in 80/20"
             ),
             self._create_lthr_zone(
-                4, "Threshold", 95, 99, estimated_lthr,
+                4, "Threshold", 95, 99, lthr,
                 "Lactate threshold and tempo training",
                 "Develop threshold power and lactate tolerance",
                 ["Increased lactate threshold", "Enhanced threshold power", "Race preparation"],
                 "8-40 minutes", "Hard, sustainable effort"
             ),
             self._create_lthr_zone(
-                5, "VO2max", 100, 102, estimated_lthr,
+                5, "VO2max", 100, 102, lthr,
                 "VO2max intervals and aerobic power",
                 "Develop maximum aerobic power",
                 ["Increased VO2max", "Enhanced aerobic power", "Improved running speed"],
                 "3-8 minutes in intervals", "Very hard, near maximum"
             ),
             self._create_lthr_zone(
-                6, "Anaerobic", 103, 106, estimated_lthr,
+                6, "Anaerobic", 103, 106, lthr,
                 "Anaerobic capacity and speed endurance",
                 "Develop anaerobic power and speed",
                 ["Enhanced anaerobic capacity", "Improved speed endurance", "Better finishing kick"],
                 "30 seconds to 2 minutes", "Extremely hard, unsustainable"
             ),
             self._create_lthr_zone(
-                7, "Sprint", 107, 120, estimated_lthr,
+                7, "Sprint", 107, 120, lthr,
                 "Maximum sprint power and neuromuscular development",
                 "Develop maximum speed and power",
                 ["Enhanced sprint speed", "Improved neuromuscular power", "Maximum running speed"],
@@ -1169,15 +1365,16 @@ class HeartRateZoneAnalyzer(FitnessAnalyzer):
     def analyze(self, filter_criteria: AnalyticsFilter) -> AnalyticsResult:
         """
         Analyze heart rate zones based on filter criteria
-        
+
         Args:
             filter_criteria: Analytics filter criteria containing user preferences
-            
+
         Returns:
             AnalyticsResult containing heart rate zone analysis
         """
-        # This method would typically integrate with user data
+        # This method would typically integrate with user data from filter_criteria
         # For now, we'll return a placeholder result
+        _ = filter_criteria  # Acknowledge parameter for future use
         data = {
             "message": "Use calculate_heart_rate_zones method for zone calculations",
             "available_methods": [method.value for method in HeartRateZoneMethod]
@@ -1195,31 +1392,29 @@ class HeartRateZoneAnalyzer(FitnessAnalyzer):
     def calculate_heart_rate_zones(
         self,
         max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
         age: Optional[int] = None,
         method: Union[HeartRateZoneMethod, str] = HeartRateZoneMethod.BCF_ABCC_WCPP_REVISED
     ) -> HeartRateZoneResult:
         """
         Calculate heart rate zones using specified method
-        
+
         Args:
             max_heart_rate: Known maximum heart rate in BPM
+            resting_heart_rate: Known resting heart rate in BPM
+            lthr: Known lactate threshold heart rate in BPM
             age: Age in years (used to estimate max HR if not provided)
             method: Heart rate zone calculation method
-            
+
         Returns:
             HeartRateZoneResult containing calculated zones and guidance
-            
+
         Raises:
-            InvalidParameterError: If neither max_heart_rate nor age provided
+            InvalidParameterError: If no sufficient parameters provided
             AnalyticsError: If calculation fails
         """
         try:
-            # Validate inputs
-            if max_heart_rate is None and age is None:
-                raise InvalidParameterError(
-                    "Either max_heart_rate or age must be provided"
-                )
-            
             # Convert string method to enum if needed
             if isinstance(method, str):
                 try:
@@ -1229,23 +1424,37 @@ class HeartRateZoneAnalyzer(FitnessAnalyzer):
                     raise InvalidParameterError(
                         f"Invalid method '{method}'. Available: {available}"
                     )
-            
-            # Estimate max heart rate if not provided
-            if max_heart_rate is None:
-                max_heart_rate = HeartRateZoneCalculator.estimate_max_heart_rate(age)
-                logger.info(f"Estimated max heart rate: {max_heart_rate} BPM for age {age}")
-            
-            # Validate max heart rate range
-            if max_heart_rate < 100 or max_heart_rate > 250:
+
+            # Validate heart rate ranges if provided
+            if max_heart_rate is not None and (max_heart_rate < 100 or max_heart_rate > 250):
                 raise InvalidParameterError(
                     f"Maximum heart rate {max_heart_rate} is outside reasonable range (100-250 BPM)"
                 )
-            
+
+            if resting_heart_rate is not None and (resting_heart_rate < 30 or resting_heart_rate > 100):
+                raise InvalidParameterError(
+                    f"Resting heart rate {resting_heart_rate} is outside reasonable range (30-100 BPM)"
+                )
+
+            if lthr is not None and (lthr < 80 or lthr > 220):
+                raise InvalidParameterError(
+                    f"Lactate threshold heart rate {lthr} is outside reasonable range (80-220 BPM)"
+                )
+
+            if max_heart_rate is not None and lthr is not None and lthr >= max_heart_rate:
+                raise InvalidParameterError(
+                    f"Lactate threshold heart rate ({lthr}) must be less than max heart rate ({max_heart_rate})"
+                )
+
             # Get calculator and compute zones
             calculator = self.calculators[method]
-            result = calculator.calculate_zones(max_heart_rate, age)
-            
-            logger.info(f"Calculated {method.value} zones for max HR {max_heart_rate}")
+            result = calculator.calculate_zones(
+                max_heart_rate=max_heart_rate,
+                resting_heart_rate=resting_heart_rate,
+                lthr=lthr,
+                age=age
+            )
+
             return result
             
         except Exception as e:
@@ -1255,17 +1464,21 @@ class HeartRateZoneAnalyzer(FitnessAnalyzer):
     def compare_methods(
         self,
         max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
         age: Optional[int] = None,
         methods: Optional[List[Union[HeartRateZoneMethod, str]]] = None
     ) -> Dict[str, HeartRateZoneResult]:
         """
         Compare multiple heart rate zone calculation methods
-        
+
         Args:
             max_heart_rate: Known maximum heart rate in BPM
+            resting_heart_rate: Known resting heart rate in BPM
+            lthr: Known lactate threshold heart rate in BPM
             age: Age in years (used to estimate max HR if not provided)
             methods: List of methods to compare (defaults to all methods)
-            
+
         Returns:
             Dictionary mapping method names to HeartRateZoneResult objects
         """
@@ -1275,11 +1488,17 @@ class HeartRateZoneAnalyzer(FitnessAnalyzer):
         results = {}
         for method in methods:
             try:
-                result = self.calculate_heart_rate_zones(max_heart_rate, age, method)
+                result = self.calculate_heart_rate_zones(
+                    max_heart_rate=max_heart_rate,
+                    resting_heart_rate=resting_heart_rate,
+                    lthr=lthr,
+                    age=age,
+                    method=method
+                )
                 results[result.method_name] = result
             except Exception as e:
                 logger.warning(f"Failed to calculate zones for {method}: {str(e)}")
-        
+
         return results
     
     def get_zone_recommendations(
@@ -1613,6 +1832,36 @@ class HeartRateZoneAnalyzer(FitnessAnalyzer):
                 return "Well-suited method for this sport"
         else:
             return "Compatible but not specifically optimized for this sport"
+
+    def calculate_zones(
+        self,
+        method: HeartRateZoneMethod,
+        max_heart_rate: Optional[int] = None,
+        resting_heart_rate: Optional[int] = None,
+        lthr: Optional[int] = None,
+        age: Optional[int] = None
+    ) -> List:
+        """
+        Calculate heart rate zones using specified method (wrapper for analytics route compatibility)
+
+        Args:
+            method: Heart rate zone calculation method
+            max_heart_rate: Maximum heart rate in BPM
+            resting_heart_rate: Resting heart rate in BPM
+            lthr: Lactate threshold heart rate in BPM
+            age: Age in years
+
+        Returns:
+            List of heart rate zone objects
+        """
+        result = self.calculate_heart_rate_zones(
+            max_heart_rate=max_heart_rate,
+            resting_heart_rate=resting_heart_rate,
+            lthr=lthr,
+            age=age,
+            method=method
+        )
+        return result.zones
 
 
 

@@ -34,7 +34,7 @@ logger = get_logger(__name__)
 class PowerZoneMethod(Enum):
     """Available power zone calculation methods"""
     STEVE_PALLADINO = "steve_palladino"  # 7 zones - Running FTP/CP based
-    STRYD_RUNNING = "stryd_running"  # 7 zones - Stryd running power zones
+    STRYD_RUNNING = "stryd_running"  # 5 zones - Stryd running power zones
     CRITICAL_POWER = "critical_power"  # 7 zones - Critical Power model
 
 
@@ -514,3 +514,18 @@ class PowerZoneAnalyzer(FitnessAnalyzer):
         if not calculator:
             raise InvalidParameterError(f"Unsupported method: {method}")
         return calculator.get_method_description()
+
+    def calculate_zones(self, method: PowerZoneMethod, threshold_power: float, body_weight: Optional[float] = None) -> List[PowerZone]:
+        """
+        Calculate power zones using specified method (wrapper for analytics route compatibility)
+
+        Args:
+            method: Power zone calculation method
+            threshold_power: FTP or Critical Power in watts
+            body_weight: Body weight in kg (optional)
+
+        Returns:
+            List of PowerZone objects
+        """
+        result = self.calculate_power_zones(threshold_power, method, body_weight)
+        return result.zones

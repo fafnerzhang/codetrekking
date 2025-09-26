@@ -21,7 +21,7 @@ from ..models.responses import (
 )
 from ..middleware.auth import get_current_user
 from ..middleware.logging import audit_logger
-from ..settings import get_settings
+from ..config import get_settings
 from ..database import User
 from peakflow_tasks.api import TaskManager
 

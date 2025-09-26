@@ -247,11 +247,12 @@ class JWTService:
 
             # Validate session exists and is active
             session_id = UUID(payload["session_id"])
-            user_session = (
-                self.db.query(UserSession)
-                .filter(UserSession.id == session_id, UserSession.is_active)
-                .first()
-            )
+            from sqlmodel import select
+            user_session = self.db.exec(
+                select(UserSession).where(
+                    UserSession.id == session_id, UserSession.is_active
+                )
+            ).first()
 
             if not user_session:
                 raise SessionNotFoundError("Session not found or inactive")
@@ -262,7 +263,7 @@ class JWTService:
 
             # Validate user account status
             user_id = UUID(payload["sub"])
-            user = self.db.query(User).filter(User.id == user_id).first()
+            user = self.db.exec(select(User).where(User.id == user_id)).first()
 
             if not user or not user.is_active:
                 raise TokenValidationError("User account inactive")
@@ -324,16 +325,13 @@ class JWTService:
 
             # Validate session exists and is active
             session_id = UUID(payload["session_id"])
-            user_session = (
-                self.db.query(UserSession)
-                .filter(
+            user_session = self.db.exec(
+                select(UserSession).where(
                     UserSession.id == session_id,
                     UserSession.is_active,
-                    UserSession.refresh_token
-                    == token,  # Verify token matches stored token
+                    UserSession.refresh_token == token  # Verify token matches stored token
                 )
-                .first()
-            )
+            ).first()
 
             if not user_session:
                 raise SessionNotFoundError("Session not found or token mismatch")
@@ -344,7 +342,7 @@ class JWTService:
 
             # Validate user account status
             user_id = UUID(payload["sub"])
-            user = self.db.query(User).filter(User.id == user_id).first()
+            user = self.db.exec(select(User).where(User.id == user_id)).first()
 
             if not user or not user.is_active:
                 raise TokenValidationError("User account inactive")
@@ -382,7 +380,7 @@ class JWTService:
         try:
             payload = self.validate_access_token(token)
             user_id = UUID(payload["sub"])
-            return self.db.query(User).filter(User.id == user_id).first()
+            return self.db.exec(select(User).where(User.id == user_id)).first()
 
         except (TokenValidationError, SessionNotFoundError):
             return None
@@ -399,11 +397,11 @@ class JWTService:
             bool: True if session was revoked successfully
         """
         try:
-            user_session = (
-                self.db.query(UserSession)
-                .filter(UserSession.id == session_id, UserSession.is_active)
-                .first()
-            )
+            user_session = self.db.exec(
+                select(UserSession).where(
+                    UserSession.id == session_id, UserSession.is_active
+                )
+            ).first()
 
             if not user_session:
                 return False
@@ -447,17 +445,18 @@ class JWTService:
             int: Number of sessions revoked
         """
         try:
-            revoked_count = (
-                self.db.query(UserSession)
-                .filter(UserSession.user_id == user_id, UserSession.is_active)
-                .update(
-                    {
-                        "is_active": False,
-                        "revoked_at": datetime.utcnow(),
-                        "revoked_reason": reason,
-                    }
+            from sqlmodel import update
+            stmt = (
+                update(UserSession)
+                .where(UserSession.user_id == user_id, UserSession.is_active)
+                .values(
+                    is_active=False,
+                    revoked_at=datetime.utcnow(),
+                    revoked_reason=reason,
                 )
             )
+            result = self.db.exec(stmt)
+            revoked_count = result.rowcount
 
             self.db.commit()
 
@@ -488,11 +487,12 @@ class JWTService:
             int: Number of expired sessions cleaned up
         """
         try:
-            expired_count = (
-                self.db.query(UserSession)
-                .filter(UserSession.refresh_token_expires < datetime.utcnow())
-                .delete()
+            from sqlmodel import delete
+            stmt = delete(UserSession).where(
+                UserSession.refresh_token_expires < datetime.utcnow()
             )
+            result = self.db.exec(stmt)
+            expired_count = result.rowcount
 
             self.db.commit()
 

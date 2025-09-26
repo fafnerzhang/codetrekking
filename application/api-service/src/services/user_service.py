@@ -20,7 +20,7 @@ from typing import Optional, Dict, Any
 from uuid import UUID
 
 from passlib.context import CryptContext
-from sqlmodel import Session
+from sqlmodel import Session, select, update
 from sqlalchemy.exc import IntegrityError
 import structlog
 
@@ -288,7 +288,7 @@ class UserService:
             Optional[User]: User object or None if not found
         """
         try:
-            return self.db.query(User).filter(User.id == user_id).first()
+            return self.db.exec(select(User).where(User.id == user_id)).first()
         except Exception as e:
             logger.error(
                 "Error retrieving user by ID", user_id=str(user_id), error=str(e)
@@ -558,11 +558,11 @@ class UserService:
         Returns:
             Optional[User]: User object or None if not found
         """
-        return (
-            self.db.query(User)
-            .filter((User.username == identifier) | (User.email == identifier.lower()))
-            .first()
-        )
+        return self.db.exec(
+            select(User).where(
+                (User.username == identifier) | (User.email == identifier.lower())
+            )
+        ).first()
 
     def _is_account_locked(self, user: User) -> bool:
         """
@@ -640,7 +640,7 @@ class UserService:
             user_id (UUID): User's unique identifier
         """
         # Find default user role
-        user_role = self.db.query(Role).filter(Role.name == "user").first()
+        user_role = self.db.exec(select(Role).where(Role.name == "user")).first()
         if user_role:
             # Import here to avoid circular import
             from ..database.models import UserRoleLink
@@ -657,15 +657,16 @@ class UserService:
         Args:
             user_id (UUID): User's unique identifier
         """
-        self.db.query(UserSession).filter(
-            UserSession.user_id == user_id, UserSession.is_active
-        ).update(
-            {
-                "is_active": False,
-                "revoked_at": datetime.utcnow(),
-                "revoked_reason": "password_changed",
-            }
+        stmt = (
+            update(UserSession)
+            .where(UserSession.user_id == user_id, UserSession.is_active)
+            .values(
+                is_active=False,
+                revoked_at=datetime.utcnow(),
+                revoked_reason="password_changed",
+            )
         )
+        self.db.exec(stmt)
 
     def _log_audit_event(
         self,

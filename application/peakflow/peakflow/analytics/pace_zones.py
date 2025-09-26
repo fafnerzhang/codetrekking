@@ -1165,3 +1165,17 @@ class PaceZoneAnalyzer(FitnessAnalyzer):
                 }
         
         return adapted
+
+    def calculate_zones(self, method: PaceZoneMethod, threshold_pace: float) -> List:
+        """
+        Calculate pace zones using specified method (wrapper for analytics route compatibility)
+
+        Args:
+            method: Pace zone calculation method
+            threshold_pace: Threshold pace in min/km
+
+        Returns:
+            List of pace zone objects
+        """
+        result = self.calculate_pace_zones(method, threshold_pace=threshold_pace)
+        return result.zones

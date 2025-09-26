@@ -41,6 +41,7 @@ dependencies = [
     "pytest>=8.4.1",
     "garmin-fit-sdk>=21.178.0",
     "matplotlib>=3.10.6",
+    "httpx>=0.28.1",
 ]
 
 [project.optional-dependencies]
@@ -74,3 +75,8 @@ python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+[dependency-groups]
+dev = [
+    "ruff>=0.13.1",
+]

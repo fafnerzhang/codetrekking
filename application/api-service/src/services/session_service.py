@@ -25,7 +25,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 
-from sqlmodel import Session
+from sqlmodel import Session, select, update, delete
 from sqlalchemy.exc import IntegrityError
 import structlog
 
@@ -185,9 +185,9 @@ class SessionService:
             Optional[UserSession]: Session object or None if not found
         """
         try:
-            return (
-                self.db.query(UserSession).filter(UserSession.id == session_id).first()
-            )
+            return self.db.exec(
+                select(UserSession).where(UserSession.id == session_id)
+            ).first()
         except Exception as e:
             logger.error(
                 "Error retrieving session by ID",
@@ -219,14 +219,12 @@ class SessionService:
             Optional[UserSession]: Session object or None if not found
         """
         try:
-            return (
-                self.db.query(UserSession)
-                .filter(
+            return self.db.exec(
+                select(UserSession).where(
                     UserSession.refresh_token == refresh_token,
                     UserSession.is_active,
                 )
-                .first()
-            )
+            ).first()
         except Exception as e:
             logger.error("Error retrieving session by refresh token", error=str(e))
             return None
@@ -245,12 +243,14 @@ class SessionService:
             List[SessionResponse]: List of user sessions
         """
         try:
-            query = self.db.query(UserSession).filter(UserSession.user_id == user_id)
+            stmt = select(UserSession).where(UserSession.user_id == user_id)
 
             if active_only:
-                query = query.filter(UserSession.is_active)
+                stmt = stmt.where(UserSession.is_active)
 
-            sessions = query.order_by(UserSession.last_accessed_at.desc()).all()
+            sessions = self.db.exec(
+                stmt.order_by(UserSession.last_accessed_at.desc())
+            ).all()
 
             # Get current session (most recently accessed active session)
             current_session_id = None
@@ -423,14 +423,14 @@ class SessionService:
             int: Number of sessions revoked
         """
         try:
-            query = self.db.query(UserSession).filter(
+            stmt = select(UserSession).where(
                 UserSession.user_id == user_id, UserSession.is_active
             )
 
             if except_session_id:
-                query = query.filter(UserSession.id != except_session_id)
+                stmt = stmt.where(UserSession.id != except_session_id)
 
-            sessions_to_revoke = query.all()
+            sessions_to_revoke = self.db.exec(stmt).all()
             revoked_count = 0
 
             for session in sessions_to_revoke:
@@ -489,16 +489,15 @@ class SessionService:
             )
 
             # Find sessions to cleanup
-            sessions_to_delete = (
-                self.db.query(UserSession)
-                .filter(
+            sessions_to_delete = self.db.exec(
+                select(UserSession)
+                .where(
                     (UserSession.refresh_token_expires < datetime.utcnow())  # Expired
                     | (not UserSession.is_active)  # Already revoked
                     | (UserSession.last_accessed_at < inactivity_cutoff)  # Inactive
                 )
                 .limit(self.CLEANUP_BATCH_SIZE)
-                .all()
-            )
+            ).all()
 
             cleanup_count = len(sessions_to_delete)
 
@@ -572,23 +571,21 @@ class SessionService:
     def _get_active_sessions_count(self, user_id: UUID) -> int:
         """Get count of active sessions for user."""
         try:
-            return (
-                self.db.query(UserSession)
-                .filter(UserSession.user_id == user_id, UserSession.is_active)
-                .count()
+            stmt = select(UserSession).where(
+                UserSession.user_id == user_id, UserSession.is_active
             )
+            return len(self.db.exec(stmt).all())
         except Exception:
             return 0
 
     def _cleanup_oldest_session(self, user_id: UUID) -> None:
         """Remove oldest active session for user."""
         try:
-            oldest_session = (
-                self.db.query(UserSession)
-                .filter(UserSession.user_id == user_id, UserSession.is_active)
+            oldest_session = self.db.exec(
+                select(UserSession)
+                .where(UserSession.user_id == user_id, UserSession.is_active)
                 .order_by(UserSession.last_accessed_at.asc())
-                .first()
-            )
+            ).first()
 
             if oldest_session:
                 self.revoke_session(oldest_session.id, reason="session_limit_exceeded")

@@ -176,7 +176,8 @@ class HealthProcessor:
                 'messages': [],
                 'file_path': fit_file_path,
                 'file_size': Path(fit_file_path).stat().st_size,
-                'parsed_at': datetime.now(timezone.utc).isoformat()
+                'parsed_at': datetime.now(timezone.utc).isoformat(),
+                'file_context': {}  # Add file context for timestamp fallbacks
             }
             
             message_count = 0
@@ -186,6 +187,18 @@ class HealthProcessor:
             
             if errors:
                 logger.warning(f"FIT file parsing errors: {errors}")
+            
+            # Extract file context for timestamp fallbacks
+            file_creation_time = None
+            if 'file_id_mesgs' in messages and len(messages['file_id_mesgs']) > 0:
+                file_id_msg = messages['file_id_mesgs'][0]
+                if 'time_created' in file_id_msg and file_id_msg['time_created']:
+                    file_creation_time = file_id_msg['time_created']
+                    if isinstance(file_creation_time, datetime):
+                        if file_creation_time.tzinfo is None:
+                            file_creation_time = file_creation_time.replace(tzinfo=timezone.utc)
+                        health_data['file_context']['creation_time'] = file_creation_time
+                        logger.debug(f"File creation time: {file_creation_time}")
             
             for message_type, message_list in messages.items():
                 message_count += len(message_list)
@@ -197,7 +210,7 @@ class HealthProcessor:
                     
                     for message_data in message_list:
                         # Convert message to our format
-                        processed_message = self._convert_sdk_message(message_type, message_data)
+                        processed_message = self._convert_sdk_message(message_type, message_data, health_data['file_context'])
                         if processed_message:
                             health_data['messages'].append(processed_message)
             
@@ -217,13 +230,14 @@ class HealthProcessor:
                 'parsed_at': datetime.now(timezone.utc).isoformat()
             }
 
-    def _convert_sdk_message(self, message_type: str, message_data: Dict) -> Optional[Dict[str, Any]]:
+    def _convert_sdk_message(self, message_type: str, message_data: Dict, file_context: Dict = None) -> Optional[Dict[str, Any]]:
         """
         Convert Garmin SDK message to standardized format.
         
         Args:
             message_type: Type of message from SDK
             message_data: Raw message data from SDK
+            file_context: File-level context for timestamp fallbacks
             
         Returns:
             Standardized message dictionary
@@ -335,6 +349,7 @@ class HealthProcessor:
         
         try:
             messages = health_data.get('messages', [])
+            file_context = health_data.get('file_context', {})
             
             for message in messages:
                 if message.get('message_type') == message_type:
@@ -343,7 +358,8 @@ class HealthProcessor:
                         file_path=file_path,
                         health_category=health_category,
                         message_type=message_type,
-                        data=message
+                        data=message,
+                        file_context=file_context
                     )
                     records.append(record)
                     
@@ -353,10 +369,10 @@ class HealthProcessor:
         return records
 
     def _create_health_record(self, user_id: str, file_path: str, health_category: str, 
-                             message_type: str, data: Dict) -> Dict:
+                             message_type: str, data: Dict, file_context: Dict = None) -> Dict:
         """Create a health record document with proper field mapping."""
         # Extract timestamp from properly decoded SDK data
-        timestamp = self._extract_timestamp(data)
+        timestamp = self._extract_timestamp(data, file_context)
         
         # Create base record structure
         record = {
@@ -369,6 +385,13 @@ class HealthProcessor:
             'source_file': Path(file_path).name,
             'sdk_source': 'garmin_fit_sdk'
         }
+        
+        # Add device information from file context if available
+        if file_context:
+            if 'creation_time' in file_context:
+                record['time_created'] = file_context['creation_time'].isoformat()
+            # Extract device info from the broader FIT file context
+            self._add_device_fields(record, data, file_context)
         
         # Add specific classification based on message type
         if 'hrv' in message_type.lower():
@@ -439,17 +462,21 @@ class HealthProcessor:
         else:
             record['health_sub_category'] = health_category
         
-        # Add all decoded fields from SDK
+        # Add all decoded fields from SDK with proper field mapping
         for key, value in data.items():
             if key not in ['message_type', 'sdk_source'] and value is not None:
-                # Clean field values
+                # Map numeric field IDs to meaningful names
+                mapped_key = self._map_field_name(key, message_type)
                 cleaned_value = self._clean_field_value(value)
                 if cleaned_value is not None:
-                    record[key] = cleaned_value
+                    record[mapped_key] = cleaned_value
+        
+        # Add specific health metric extractions based on message type
+        self._extract_health_metrics(record, data, message_type)
         
         return record
 
-    def _extract_timestamp(self, message: Dict) -> datetime:
+    def _extract_timestamp(self, message: Dict, file_context: Dict = None) -> datetime:
         """Extract timestamp from properly decoded SDK message fields."""
         # Try standard timestamp field first (properly decoded by SDK)
         if 'timestamp' in message and message['timestamp'] is not None:
@@ -577,9 +604,165 @@ class HealthProcessor:
                     except (ValueError, OverflowError):
                         continue
         
+        # Use file creation time as fallback if available
+        if file_context and 'creation_time' in file_context:
+            creation_time = file_context['creation_time']
+            logger.debug(f"No timestamp found in SDK message (type: {message.get('message_type', 'unknown')}), using file creation time: {creation_time}")
+            return creation_time
+        
         # Last resort: use current time but log more details for debugging
         logger.warning(f"No valid timestamp found in SDK message (type: {message.get('message_type', 'unknown')}, keys: {list(message.keys())[:10]}), using current time")
         return datetime.now(timezone.utc)
+
+    def _add_device_fields(self, record: Dict, data: Dict, file_context: Dict) -> None:
+        """Add device-related fields from data and file context."""
+        # Common device fields that might be in messages
+        device_fields = {
+            'serial_number': 'serial_number',
+            'manufacturer': 'manufacturer', 
+            'product': 'product',
+            'garmin_product': 'garmin_product',
+            'software_version': 'software_version',
+            'hardware_version': 'hardware_version',
+            'device_index': 'device_index',
+            'device_type': 'device_type',
+            'battery_status': 'battery_status',
+            'battery_voltage': 'battery_voltage'
+        }
+        
+        for data_key, record_key in device_fields.items():
+            if data_key in data:
+                cleaned_value = self._clean_field_value(data[data_key])
+                if cleaned_value is not None:
+                    record[record_key] = cleaned_value
+        
+        # Add file creation timestamp as Unix timestamp (float) for Elasticsearch mapping
+        if file_context and 'creation_time' in file_context:
+            creation_time = file_context['creation_time']
+            if isinstance(creation_time, datetime):
+                record['time_created'] = creation_time.timestamp()
+            else:
+                record['time_created'] = float(creation_time)
+
+    def _map_field_name(self, field_key: str, message_type: str) -> str:
+        """Map numeric field IDs and cryptic names to meaningful field names."""
+        # Common Garmin FIT field ID mappings
+        field_mappings = {
+            # Standard timestamp and time fields
+            '253': 'garmin_timestamp',
+            '1': 'legacy_timestamp',
+            '2': 'local_time_offset',
+            '3': 'time_zone',
+            '4': 'time_created_alt',
+            
+            # Heart rate and physiological fields
+            '35': 'current_activity_type_intensity_35',
+            '36': 'cycles_36', 
+            '37': 'active_time_37',
+            '38': 'active_calories_38',
+            
+            # Wellness and monitoring specific fields
+            '0': 'monitoring_info_0',
+            '6': 'duration_min_6',
+            '7': 'cycles_to_data_7',
+        }
+        
+        # Message-type specific mappings
+        if message_type == 'stress_level_mesgs':
+            stress_mappings = {
+                '2': 'stress_offset',
+                '3': 'stress_duration', 
+                '4': 'stress_quality'
+            }
+            field_mappings.update(stress_mappings)
+        elif message_type in ['24', '233']:
+            # Array message types - keep numeric but add context
+            if field_key == '2':
+                return f'data_array_{message_type}'
+        elif message_type == '279':
+            if field_key == '0':
+                return 'time_offset_data'
+        elif message_type == '355':
+            wellness_param_mappings = {
+                '0': 'wellness_param_0',
+                '1': 'wellness_param_1', 
+                '2': 'wellness_param_2'
+            }
+            field_mappings.update(wellness_param_mappings)
+            
+        return field_mappings.get(str(field_key), str(field_key))
+
+    def _extract_health_metrics(self, record: Dict, data: Dict, message_type: str) -> None:
+        """Extract and enhance health-specific metrics based on message type."""
+        
+        # Monitoring messages - extract heart rate and activity data
+        if message_type == 'monitoring_mesgs':
+            if 'heart_rate' in data:
+                record['heart_rate'] = data['heart_rate']
+            # Add intensity classification
+            if 35 in data:  # current_activity_type_intensity
+                intensity_values = data[35]
+                if isinstance(intensity_values, list) and len(intensity_values) > 0:
+                    record['current_activity_type_intensity'] = intensity_values
+                elif intensity_values is not None:
+                    record['current_activity_type_intensity'] = intensity_values
+                    
+        # Monitoring HR data - extract resting heart rate
+        elif message_type == 'monitoring_hr_data_mesgs':
+            if 'resting_heart_rate' in data:
+                record['resting_heart_rate'] = data['resting_heart_rate']
+            if 'current_day_resting_heart_rate' in data:
+                record['current_day_resting_heart_rate'] = data['current_day_resting_heart_rate']
+                
+        # Stress level messages - extract stress metrics
+        elif message_type == 'stress_level_mesgs':
+            if 'stress_level_value' in data:
+                record['stress_level_value'] = data['stress_level_value']
+            if 'stress_level_time' in data:
+                stress_time = data['stress_level_time']
+                if isinstance(stress_time, datetime):
+                    record['stress_level_time'] = stress_time.isoformat()
+                    
+        # Respiration rate messages
+        elif message_type == 'respiration_rate_mesgs':
+            if 'respiration_rate' in data:
+                record['respiration_rate'] = data['respiration_rate']
+                
+        # Monitoring info - extract metabolic and activity data
+        elif message_type == 'monitoring_info_mesgs':
+            if 'resting_metabolic_rate' in data:
+                record['resting_metabolic_rate'] = data['resting_metabolic_rate']
+            if 'cycles_to_distance' in data:
+                record['cycles_to_distance'] = data['cycles_to_distance'] 
+            if 'cycles_to_calories' in data:
+                record['cycles_to_calories'] = data['cycles_to_calories']
+            if 'local_timestamp' in data:
+                record['local_timestamp'] = data['local_timestamp']
+                
+        # Event messages - extract event data
+        elif message_type == 'event_mesgs':
+            event_fields = ['event', 'event_type', 'data', 'data16']
+            for field in event_fields:
+                if field in data:
+                    record[field] = data[field]
+                    
+        # Array data messages - extract meaningful array data
+        elif message_type in ['24', '233']:
+            if '2' in data or 2 in data:
+                array_data = data.get('2') or data.get(2)
+                if isinstance(array_data, list) and len(array_data) > 0:
+                    record[f'data_array_{message_type}'] = array_data
+                    # Extract some basic stats from the array
+                    try:
+                        numeric_data = [x for x in array_data if isinstance(x, (int, float))]
+                        if numeric_data:
+                            record[f'array_length_{message_type}'] = len(numeric_data)
+                            record[f'array_sum_{message_type}'] = sum(numeric_data)
+                            record[f'array_avg_{message_type}'] = sum(numeric_data) / len(numeric_data)
+                            record[f'array_max_{message_type}'] = max(numeric_data)
+                            record[f'array_min_{message_type}'] = min(numeric_data)
+                    except (ValueError, TypeError, ZeroDivisionError):
+                        pass
 
     def _clean_field_value(self, value: Any) -> Any:
         """Clean and validate field values for storage."""

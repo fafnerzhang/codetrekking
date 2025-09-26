@@ -164,12 +164,19 @@ class ElasticsearchStorage(StorageInterface):
 
             # Execute bulk indexing
             es_with_options = self.es.options(request_timeout=60)
-            success_count, failed_items = bulk(
-                es_with_options,
-                bulk_docs,
-                chunk_size=1000,
-                max_chunk_bytes=10485760,  # 10MB
-            )
+            try:
+                success_count, failed_items = bulk(
+                    es_with_options,
+                    bulk_docs,
+                    chunk_size=1000,
+                    max_chunk_bytes=10485760,  # 10MB
+                    raise_on_error=False,  # Don't raise on errors, return them
+                    raise_on_exception=False,  # Don't raise on exceptions
+                )
+            except Exception as bulk_e:
+                logger.error(f"Bulk operation exception: {bulk_e}")
+                result.add_failure(len(documents), f"Bulk operation failed: {bulk_e}")
+                return result
 
             result.add_success(success_count)
 
@@ -180,7 +187,15 @@ class ElasticsearchStorage(StorageInterface):
                 # Log detailed failure information
                 for i, item in enumerate(failed_items):
                     if i < 3:  # Log first 3 failures in detail
-                        logger.error(f"Failed item {i+1}: {item}")
+                        # Extract the actual error from the failed item
+                        if isinstance(item, dict):
+                            if 'index' in item and 'error' in item['index']:
+                                error_detail = item['index']['error']
+                                logger.error(f"Failed item {i+1} - Type: {error_detail.get('type', 'unknown')}, Reason: {error_detail.get('reason', 'unknown')[:200]}")
+                            else:
+                                logger.error(f"Failed item {i+1}: {str(item)[:200]}")
+                        else:
+                            logger.error(f"Failed item {i+1}: {str(item)[:200]}")
                     elif i == 3:
                         logger.error(f"... and {len(failed_items)-3} more failures")
                         break
@@ -202,12 +217,18 @@ class ElasticsearchStorage(StorageInterface):
             index_name = self.index_names[data_type]
             query = self._build_search_query(query_filter)
 
-            response = self.es.search(
-                index=index_name,
-                **query,  # Use ** unpacking instead of body
-                size=query_filter.limit,
-                from_=query_filter.offset,
-            )
+            # Add _source parameter if specified
+            search_params = {
+                "index": index_name,
+                "size": query_filter.limit,
+                "from_": query_filter.offset,
+                **query
+            }
+
+            if query_filter.source_fields is not None:
+                search_params["_source"] = query_filter.source_fields
+
+            response = self.es.search(**search_params)
 
             return [hit["_source"] for hit in response["hits"]["hits"]]
 
@@ -237,11 +258,16 @@ class ElasticsearchStorage(StorageInterface):
             logger.error(f"❌ Aggregation failed: {e}")
             raise StorageError(f"Aggregation failed: {e}")
 
-    def get_by_id(self, data_type: DataType, doc_id: str) -> Optional[Dict[str, Any]]:
+    def get_by_id(self, data_type: DataType, doc_id: str, source_fields: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         """Get document by ID"""
         try:
             index_name = self.index_names[data_type]
-            response = self.es.get(index=index_name, id=doc_id)
+
+            get_params = {"index": index_name, "id": doc_id}
+            if source_fields is not None:
+                get_params["_source"] = source_fields
+
+            response = self.es.get(**get_params)
             return response["_source"]
 
         except Exception as e:
@@ -448,6 +474,10 @@ class ElasticsearchStorage(StorageInterface):
 
         return aggs
 
+    def _get_index_name(self, data_type: DataType) -> str:
+        """Get index name for a data type"""
+        return self.index_names[data_type]
+
     def _get_index_mappings(self) -> Dict[DataType, Dict[str, Any]]:
         """Get index mapping definitions"""
         return {
@@ -604,7 +634,14 @@ class ElasticsearchStorage(StorageInterface):
                             }
                         },
                         # === Additional Dynamic Fields ===
-                        "additional_fields": {"type": "object", "dynamic": True},
+                        # === Power Data Availability ===
+                        "power_data_availability": {
+                            "properties": {
+                                "has_power_data": {"type": "boolean"},
+                                "power_values_count": {"type": "integer"},
+                                "power_metrics_available": {"type": "keyword"},
+                            }
+                        }
                     }
                 },
                 "settings": {
@@ -757,7 +794,7 @@ class ElasticsearchStorage(StorageInterface):
                             }
                         },
                         # === Additional Dynamic Fields ===
-                        "additional_fields": {"type": "object", "dynamic": True},
+                        # "additional_fields": {"type": "object", "dynamic": True},  # Commented out to reduce metadata indexing
                     }
                 },
                 "settings": {
@@ -924,7 +961,7 @@ class ElasticsearchStorage(StorageInterface):
                             }
                         },
                         # === Additional Dynamic Fields ===
-                        "additional_fields": {"type": "object", "dynamic": True},
+                        # "additional_fields": {"type": "object", "dynamic": True},  # Commented out to reduce metadata indexing
                     }
                 },
                 "settings": {
@@ -954,6 +991,7 @@ class ElasticsearchStorage(StorageInterface):
                         "height": {"type": "float"},
                         "gender": {"type": "keyword"},
                         "age": {"type": "integer"},
+                        "birth_date": {"type": "date"},
                         "training_zones": {"type": "object", "dynamic": True},
                         "vdot": {"type": "float"},
                         "running_economy": {"type": "float"},
@@ -972,7 +1010,7 @@ class ElasticsearchStorage(StorageInterface):
                         "form_score": {"type": "float"},
                         "updated_at": {"type": "date"},
                         "created_at": {"type": "date"},
-                        "additional_fields": {"type": "object", "dynamic": True},
+                        # "additional_fields": {"type": "object", "dynamic": True},  # Commented out to reduce metadata indexing
                     }
                 },
                 "settings": {
@@ -1035,7 +1073,7 @@ class ElasticsearchStorage(StorageInterface):
                         "event_type": {"type": "keyword"},
                         "timestamp_16": {"type": "long"},
                         # === Additional Dynamic Fields for any other FIT fields ===
-                        "additional_fields": {"type": "object", "dynamic": True},
+                        # "additional_fields": {"type": "object", "dynamic": True},  # Commented out to reduce metadata indexing
                     }
                 },
                 "settings": {
@@ -1089,7 +1127,7 @@ class ElasticsearchStorage(StorageInterface):
                         "ant_network": {"type": "keyword"},
                         "source_type": {"type": "keyword"},
                         # === Additional Dynamic Fields for any other FIT fields ===
-                        "additional_fields": {"type": "object", "dynamic": True},
+                        # "additional_fields": {"type": "object", "dynamic": True},  # Commented out to reduce metadata indexing
                     }
                 },
                 "settings": {
@@ -1136,7 +1174,7 @@ class ElasticsearchStorage(StorageInterface):
                         "ant_network": {"type": "keyword"},
                         "source_type": {"type": "text"},
                         # === Additional Dynamic Fields for any other FIT fields ===
-                        "additional_fields": {"type": "object", "dynamic": True},
+                        # "additional_fields": {"type": "object", "dynamic": True},  # Commented out to reduce metadata indexing
                     }
                 },
                 "settings": {
@@ -1165,7 +1203,7 @@ class ElasticsearchStorage(StorageInterface):
                         "number": {"type": "float"},
                         "type": {"type": "float"},
                         # === Additional Dynamic Fields for any other FIT fields ===
-                        "additional_fields": {"type": "object", "dynamic": True},
+                        # "additional_fields": {"type": "object", "dynamic": True},  # Commented out to reduce metadata indexing
                     }
                 },
                 "settings": {
@@ -1236,9 +1274,8 @@ class ElasticsearchStorage(StorageInterface):
                         "confidence": {"type": "keyword"},
                         "warnings": {"type": "text"},
                         "errors": {"type": "text"},
-                        
                         # === Additional Dynamic Fields ===
-                        "additional_fields": {"type": "object", "dynamic": True},
+                        # "additional_fields": {"type": "object", "dynamic": True},  # Commented out to reduce metadata indexing
                     }
                 },
                 "settings": {

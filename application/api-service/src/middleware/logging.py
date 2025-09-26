@@ -4,8 +4,9 @@ Request logging middleware.
 
 import time
 import uuid
-from typing import Dict, Any
-from fastapi import Request
+from typing import Dict, Any, Callable
+from fastapi import Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -282,3 +283,11 @@ class SecurityLogger:
 
 # Global security logger instance
 security_logger = SecurityLogger()
+
+
+class LoggingMiddleware(BaseHTTPMiddleware):
+    """FastAPI middleware for request/response logging."""
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """Dispatch method for the middleware."""
+        return await logging_middleware(request, call_next)

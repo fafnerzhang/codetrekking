@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlmodel import Session
+from sqlmodel import Session, select
 import structlog
 
 from ..database import get_db, User
@@ -80,7 +80,7 @@ async def get_current_user(
             raise credentials_exception
 
         # Get user from database
-        user = db.query(User).filter(User.id == user_uuid).first()
+        user = db.exec(select(User).where(User.id == user_uuid)).first()
         if user is None:
             logger.warning("User not found for valid token", user_id=user_id)
             raise credentials_exception
@@ -186,7 +186,7 @@ def optional_auth(
         if not session or not session.is_active or session.user_id != user_uuid:
             return None
 
-        user = db.query(User).filter(User.id == user_uuid).first()
+        user = db.exec(select(User).where(User.id == user_uuid)).first()
         if user is None or not user.is_active:
             return None
 
@@ -195,6 +195,57 @@ def optional_auth(
     except Exception:
         # Log the exception but don't raise it for optional auth
         return None
+
+
+async def verify_auth(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+) -> User:
+    """
+    Verify authentication for MCP endpoints.
+    
+    This is a dependency specifically designed for MCP (Model Context Protocol)
+    endpoints. It provides the same authentication as get_current_user but
+    with additional logging for MCP context.
+    
+    Args:
+        credentials: HTTP Bearer token credentials
+        db: Database session
+        
+    Returns:
+        User: The authenticated user
+        
+    Raises:
+        HTTPException: If authentication fails
+    """
+    logger.debug("MCP authentication verification started")
+    
+    try:
+        # Use the existing get_current_user logic
+        user = await get_current_user(credentials, db)
+        
+        logger.info(
+            "MCP authentication successful",
+            user_id=str(user.id),
+            username=user.username
+        )
+        
+        return user
+        
+    except HTTPException as e:
+        logger.warning(
+            "MCP authentication failed",
+            status_code=e.status_code,
+            detail=e.detail
+        )
+        raise e
+    except Exception as e:
+        logger.error("Unexpected error in MCP authentication", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication verification failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 class AuthMiddleware:
@@ -278,7 +329,7 @@ class AuthMiddleware:
             # Log successful authentication
             logger.info(
                 "Request authenticated",
-                user_id=str(auth_result["user"].id),
+                user_id=auth_result["user_id"],
                 path=path,
                 method=method,
                 ip_address=self._get_client_ip(scope),
@@ -361,13 +412,16 @@ class AuthMiddleware:
                     }
 
                 # Get user from database
-                user = db.query(User).filter(User.id == user_uuid).first()
+                user = db.exec(select(User).where(User.id == user_uuid)).first()
                 if not user:
                     return {"authenticated": False, "error": "User not found"}
 
                 # Check if user is active
                 if not user.is_active:
                     return {"authenticated": False, "error": "User account is disabled"}
+
+                # Extract user ID while session is active to avoid DetachedInstanceError
+                user_id_str = str(user.id)
 
                 # Update session last accessed time (if method exists)
                 try:
@@ -381,6 +435,7 @@ class AuthMiddleware:
                 return {
                     "authenticated": True,
                     "user": user,
+                    "user_id": user_id_str,
                     "session_id": session_uuid,
                     "token_payload": payload,
                 }

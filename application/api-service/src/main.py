@@ -3,49 +3,26 @@ FastAPI application entry point.
 """
 
 import os
-import logging
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from .middleware.auth import AuthMiddleware, verify_auth
+from .middleware.logging import LoggingMiddleware
+from .config import setup_application_logging
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-import structlog
+from fastapi_mcp import AuthConfig, FastApiMCP
 
 from .routes import auth, garmin, garmin_credentials, tasks, monitoring, analytics
 
-# from .middleware.logging import LoggingMiddleware, RequestResponseLogger  # Not implemented yet
 from peakflow_tasks.api import TaskManager
 
 # Configure structured logging
-logging.basicConfig(
-    format="%(message)s",
-    stream=os.sys.stdout,
-    level=logging.INFO,
-)
-
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer(),
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
-)
-
-logger = structlog.get_logger(__name__)
+logger = setup_application_logging()
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -135,17 +112,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+app.add_middleware(AuthMiddleware)
 
 # Add custom middleware
-# app.add_middleware(LoggingMiddleware)  # Not implemented yet
-# app.add_middleware(RequestResponseLogger)  # Not implemented yet
+app.add_middleware(LoggingMiddleware)
 
-# Add authentication middleware
-# Note: AuthMiddleware is available but disabled until database authentication services are ready
-# To enable: uncomment the line below and ensure database connection is working
-# app.add_asgi_middleware(AuthMiddleware)
-
-logger.info("Middleware setup completed", auth_middleware_enabled=False)
+logger.info("Middleware setup completed", auth_middleware_enabled=False, logging_middleware_enabled=True)
 
 
 # Exception handlers
@@ -213,6 +185,7 @@ async def root():
             "garmin_credentials": "/api/v1/garmin/credentials",
             "task_management": "/api/v1/tasks",
             "monitoring": "/api/v1/monitoring",
+            "mcp_server": "/mcp",
         },
     }
 
@@ -220,9 +193,9 @@ async def root():
 # Register route modules
 app.include_router(auth.router)
 app.include_router(garmin.router)
-app.include_router(garmin_credentials.router)  # Phase 5: Credential management
+app.include_router(garmin_credentials.router)
 app.include_router(tasks.router)
-app.include_router(analytics.router)  # Analytics endpoints
+app.include_router(analytics.router)
 app.include_router(monitoring.router)
 
 
@@ -279,6 +252,7 @@ async def get_api_info():
             "monitoring": True,
             "rate_limiting": True,
             "audit_logging": True,
+            "mcp_protocol": True,
         },
         "limits": {
             "default_rate_limit": "100/minute",
@@ -338,6 +312,21 @@ async def get_service_status(request: Request):
                 "error": "Status check failed",
             },
         )
+
+
+mcp = FastApiMCP(
+    app,
+    auth_config=AuthConfig(dependencies=[Depends(verify_auth)]),
+    name="CodeTrekking MCP Server",
+    description="MCP server for CodeTrekking fitness data pipeline API endpoints",
+    include_tags=[
+        "analytics"
+    ],
+    describe_all_responses=True,
+    describe_full_response_schema=True
+)
+
+mcp.mount_http()
 
 
 if __name__ == "__main__":

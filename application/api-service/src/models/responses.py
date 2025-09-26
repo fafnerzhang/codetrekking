@@ -2,7 +2,7 @@
 API response models and schemas.
 """
 
-from datetime import datetime
+from datetime import datetime, date as Date
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from pydantic import BaseModel, Field
@@ -379,8 +379,54 @@ class GarminCredentialTestResponse(BaseModel):
 # Analytics Response Models
 
 
+class ZoneDistribution(BaseModel):
+    """Zone distribution with both time and percentage."""
+
+    zone_1_seconds: int = Field(default=0, description="Time in zone 1 (seconds)")
+    zone_1_percentage: float = Field(default=0.0, description="Percentage of time in zone 1")
+    zone_2_seconds: int = Field(default=0, description="Time in zone 2 (seconds)")
+    zone_2_percentage: float = Field(default=0.0, description="Percentage of time in zone 2")
+    zone_3_seconds: int = Field(default=0, description="Time in zone 3 (seconds)")
+    zone_3_percentage: float = Field(default=0.0, description="Percentage of time in zone 3")
+    zone_4_seconds: int = Field(default=0, description="Time in zone 4 (seconds)")
+    zone_4_percentage: float = Field(default=0.0, description="Percentage of time in zone 4")
+    zone_5_seconds: int = Field(default=0, description="Time in zone 5 (seconds)")
+    zone_5_percentage: float = Field(default=0.0, description="Percentage of time in zone 5")
+    zone_6_seconds: int = Field(default=0, description="Time in zone 6 (seconds)")
+    zone_6_percentage: float = Field(default=0.0, description="Percentage of time in zone 6")
+    zone_7_seconds: int = Field(default=0, description="Time in zone 7 (seconds)")
+    zone_7_percentage: float = Field(default=0.0, description="Percentage of time in zone 7")
+
+
+class ZoneDefinition(BaseModel):
+    """Zone definition with descriptive information."""
+    zone_number: int = Field(..., description="Zone number")
+    zone_name: str = Field(..., description="Zone name")
+    range_min: float = Field(..., description="Zone minimum value")
+    range_max: float = Field(..., description="Zone maximum value")
+    range_unit: str = Field(..., description="Unit of measurement (watts, min/km, bpm)")
+    percentage_min: Optional[float] = Field(None, description="Minimum percentage of threshold")
+    percentage_max: Optional[float] = Field(None, description="Maximum percentage of threshold")
+    description: str = Field(default="", description="Zone description")
+    purpose: str = Field(default="", description="Training purpose")
+    benefits: List[str] = Field(default_factory=list, description="Training benefits")
+    duration_guidance: str = Field(default="", description="Recommended duration")
+    intensity_feel: str = Field(default="", description="Subjective intensity feel")
+    seconds: int = Field(default=0, description="Time spent in this zone (seconds)")
+    percentage: float = Field(default=0.0, description="Percentage of total time in this zone")
+
+
+class ZonesWithDefinitions(BaseModel):
+    """Zone data with both definitions and time distributions."""
+    zones: List[ZoneDefinition] = Field(default_factory=list, description="Zone definitions and time data")
+    method: str = Field(..., description="Calculation method used")
+    method_description: Optional[str] = Field(None, description="Description of the calculation method")
+    threshold_value: Optional[float] = Field(None, description="Threshold value used for calculations")
+    threshold_unit: Optional[str] = Field(None, description="Unit of threshold value")
+
+
 class ZonePercentage(BaseModel):
-    """Power/pace zone percentage breakdown."""
+    """Power/pace zone percentage breakdown (legacy for compatibility)."""
 
     zone_1: float = Field(..., description="Percentage of time in zone 1")
     zone_2: float = Field(..., description="Percentage of time in zone 2")
@@ -400,16 +446,26 @@ class HealthMetrics(BaseModel):
 
 
 class WeeklyActivitySummary(BaseModel):
-    """7-day activity snapshot response."""
+    """Enhanced activity summary response with multi-zone analysis."""
 
     user_id: str = Field(..., description="User identifier")
     total_distance: float = Field(..., description="Total distance in km")
     total_tss: float = Field(..., description="Total Training Stress Score")
-    total_time: int = Field(..., description="Total activity time in seconds")
+    total_time: str = Field(..., description="Total activity time (HH:MM format)")
     activity_count: int = Field(..., description="Number of activities")
-    zone_percentages: ZonePercentage = Field(..., description="Zone distribution")
-    health_metrics: HealthMetrics = Field(..., description="Health metrics summary")
+
+    # Legacy zone distributions for backward compatibility
+    power_zone_distribution: ZoneDistribution = Field(..., description="Power zone distribution")
+    pace_zone_distribution: ZoneDistribution = Field(..., description="Pace zone distribution")
+    heart_rate_zone_distribution: ZoneDistribution = Field(..., description="Heart rate zone distribution")
+
+    # Enhanced zone definitions with descriptions
+    power_zones: ZonesWithDefinitions = Field(..., description="Power zones with definitions")
+    pace_zones: ZonesWithDefinitions = Field(..., description="Pace zones with definitions")
+    heart_rate_zones: ZonesWithDefinitions = Field(..., description="Heart rate zones with definitions")
+
     date_range: Dict[str, str] = Field(..., description="Date range of data")
+    zone_methods: Dict[str, str] = Field(..., description="Zone calculation methods used")
 
 
 class LapData(BaseModel):
@@ -424,20 +480,131 @@ class LapData(BaseModel):
     zone: Optional[int] = Field(None, description="Primary zone for this lap")
 
 
-class ActivityDetailResponse(BaseModel):
-    """Single activity detail response."""
+class UserIndicatorsResponse(BaseModel):
+    """User fitness indicators response."""
 
-    activity_id: str = Field(..., description="Activity identifier")
     user_id: str = Field(..., description="User identifier")
-    name: str = Field(..., description="Activity name")
-    description: Optional[str] = Field(None, description="Activity description")
-    sport: str = Field(..., description="Sport type")
-    distance: float = Field(..., description="Distance in km")
-    time: int = Field(..., description="Activity time in seconds")
-    tss: Optional[float] = Field(None, description="Training Stress Score")
-    zone_percentages: ZonePercentage = Field(..., description="Zone distribution")
-    lap_data: List[LapData] = Field(..., description="Lap breakdown")
-    last_night_hrv: Optional[float] = Field(None, description="Previous night HRV")
-    last_night_resting_hr: Optional[int] = Field(None, description="Previous night resting HR")
-    last_night_health_score: Optional[float] = Field(None, description="Previous night health score")
-    timestamp: datetime = Field(..., description="Activity timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+
+    # Threshold values
+    threshold_power: Optional[int] = Field(None, description="Threshold power in watts")
+    threshold_heart_rate: Optional[int] = Field(None, description="Threshold heart rate in BPM")
+    threshold_pace: Optional[float] = Field(None, description="Threshold pace in minutes per km")
+
+    # Max values
+    max_heart_rate: Optional[int] = Field(None, description="Maximum heart rate in BPM")
+    max_power: Optional[int] = Field(None, description="Maximum power in watts")
+    max_pace: Optional[float] = Field(None, description="Maximum pace in minutes per km")
+
+    # Critical thresholds
+    critical_power: Optional[int] = Field(None, description="Critical power in watts")
+    critical_speed: Optional[float] = Field(None, description="Critical speed in m/s")
+
+    # VO2 and fitness metrics
+    vo2max: Optional[float] = Field(None, description="VO2 max in ml/kg/min")
+    vdot: Optional[float] = Field(None, description="VDOT running performance")
+
+    # Physiological data
+    resting_heart_rate: Optional[int] = Field(None, description="Resting heart rate in BPM")
+    weight: Optional[float] = Field(None, description="Body weight in kg")
+    height: Optional[float] = Field(None, description="Height in cm")
+
+    # Personal information
+    gender: Optional[str] = Field(None, description="Gender")
+    birth_date: Optional[Date] = Field(None, description="Birth date")
+    age: Optional[int] = Field(None, description="Age in years")
+
+    # Body composition
+    body_fat_percentage: Optional[float] = Field(None, description="Body fat percentage")
+    muscle_mass: Optional[float] = Field(None, description="Muscle mass in kg")
+
+    # Training metrics
+    training_stress_score: Optional[float] = Field(None, description="Current TSS")
+    power_to_weight_ratio: Optional[float] = Field(None, description="Power to weight ratio")
+
+    # Efficiency metrics
+    running_economy: Optional[float] = Field(None, description="Running economy")
+    cycling_efficiency: Optional[float] = Field(None, description="Cycling efficiency percentage")
+    stride_length: Optional[float] = Field(None, description="Stride length in meters")
+    cadence: Optional[float] = Field(None, description="Cadence in steps/min")
+
+    # Health metrics
+    hydration_level: Optional[float] = Field(None, description="Hydration level percentage")
+    anaerobic_threshold: Optional[float] = Field(None, description="Anaerobic threshold heart rate")
+    aerobic_threshold: Optional[float] = Field(None, description="Aerobic threshold heart rate")
+
+
+# Health Metrics Response Models
+
+
+class DailyHealthMetrics(BaseModel):
+    """Daily health metrics summary."""
+
+    date: Date = Field(..., description="Date for this day's metrics")
+    
+    # HRV metrics
+    hrv_rmssd_avg: Optional[float] = Field(None, description="Average HRV RMSSD for the day (ms)")
+    hrv_rmssd_night_avg: Optional[float] = Field(None, description="Average HRV RMSSD during night hours (ms)")
+    hrv_rmssd_min: Optional[float] = Field(None, description="Minimum HRV RMSSD for the day (ms)")
+    hrv_rmssd_max: Optional[float] = Field(None, description="Maximum HRV RMSSD for the day (ms)")
+    hrv_data_points: int = Field(default=0, description="Number of HRV data points for the day")
+    hrv_night_data_points: int = Field(default=0, description="Number of HRV data points during night hours")
+    
+    # Heart rate metrics
+    resting_hr_avg: Optional[float] = Field(None, description="Average resting heart rate for the day (BPM)")
+    resting_hr_night_avg: Optional[float] = Field(None, description="Average resting heart rate during night hours (BPM)")
+    resting_hr_min: Optional[float] = Field(None, description="Minimum resting heart rate for the day (BPM)")
+    resting_hr_max: Optional[float] = Field(None, description="Maximum resting heart rate for the day (BPM)")
+    hr_data_points: int = Field(default=0, description="Number of heart rate data points for the day")
+    hr_night_data_points: int = Field(default=0, description="Number of heart rate data points during night hours")
+    
+    # Battery/Device status
+    battery_level_avg: Optional[float] = Field(None, description="Average battery level for the day (%)")
+    battery_level_min: Optional[float] = Field(None, description="Minimum battery level for the day (%)")
+    battery_level_max: Optional[float] = Field(None, description="Maximum battery level for the day (%)")
+    battery_data_points: int = Field(default=0, description="Number of battery data points for the day")
+    
+    # Stress metrics (if available)
+    stress_score_avg: Optional[float] = Field(None, description="Average stress score for the day (0-100)")
+    stress_score_night_avg: Optional[float] = Field(None, description="Average stress score during night hours (0-100)")
+
+
+class HealthMetricsSummary(BaseModel):
+    """Overall health metrics summary for the requested period."""
+
+    # Period summary
+    start_date: Date = Field(..., description="Start date of the period")
+    end_date: Date = Field(..., description="End date of the period")
+    total_days: int = Field(..., description="Total number of days in the period")
+    
+    # Overall HRV metrics
+    avg_hrv_rmssd: Optional[float] = Field(None, description="Average HRV RMSSD for the entire period (ms)")
+    avg_hrv_rmssd_night: Optional[float] = Field(None, description="Average HRV RMSSD during night hours for the entire period (ms)")
+    hrv_trend: Optional[str] = Field(None, description="HRV trend over the period (improving/stable/declining)")
+    total_hrv_measurements: int = Field(default=0, description="Total HRV measurements in the period")
+    total_hrv_night_measurements: int = Field(default=0, description="Total HRV measurements during night hours")
+    
+    # Overall heart rate metrics
+    avg_resting_hr: Optional[float] = Field(None, description="Average resting heart rate for the entire period (BPM)")
+    avg_resting_hr_night: Optional[float] = Field(None, description="Average resting heart rate during night hours for the entire period (BPM)")
+    hr_trend: Optional[str] = Field(None, description="Heart rate trend over the period (improving/stable/declining)")
+    total_hr_measurements: int = Field(default=0, description="Total heart rate measurements in the period")
+    total_hr_night_measurements: int = Field(default=0, description="Total heart rate measurements during night hours")
+    
+    # Overall battery metrics
+    avg_battery_level: Optional[float] = Field(None, description="Average battery level for the entire period (%)")
+    battery_trend: Optional[str] = Field(None, description="Battery trend over the period (stable/declining)")
+    total_battery_measurements: int = Field(default=0, description="Total battery measurements in the period")
+
+
+class HealthMetricsResponse(BaseModel):
+    """Complete health metrics response."""
+
+    user_id: str = Field(..., description="User identifier")
+    summary: HealthMetricsSummary = Field(..., description="Overall period summary")
+    daily_metrics: List[DailyHealthMetrics] = Field(..., description="Daily breakdown of health metrics")
+    
+    # Metadata
+    generated_at: datetime = Field(default_factory=datetime.utcnow, description="When this report was generated")
+    timezone: str = Field(default="Asia/Taipei", description="Timezone used for night period calculations")
+    night_hours: str = Field(default="23:00-06:00", description="Hours considered as night period")

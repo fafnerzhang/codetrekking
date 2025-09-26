@@ -190,18 +190,19 @@ def _get_existing_activity_ids(storage: ElasticsearchStorage, user_id: str, days
     try:
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=days)
-        
+
         query_filter = QueryFilter()
         query_filter.add_term_filter('user_id', user_id)
         query_filter.add_date_range('start_time', start_date, end_date)
         query_filter.limit = 10000
-        
+        query_filter.set_source_fields(['activity_id'])  # Only return activity_id field
+
         sessions = storage.search(DataType.SESSION, query_filter)
         activity_ids = {
             session.get('activity_id') for session in sessions
             if session.get('activity_id')
         }
-        
+
         return activity_ids
         
     except Exception as e:

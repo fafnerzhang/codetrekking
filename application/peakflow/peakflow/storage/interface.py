@@ -32,6 +32,7 @@ class QueryFilter:
         self.sort_fields = []
         self.limit = 1000
         self.offset = 0
+        self.source_fields = None  # None means return all fields, [] means return no fields
 
     def add_term_filter(self, field: str, value: Any) -> "QueryFilter":
         """Add exact match filter"""
@@ -96,6 +97,16 @@ class QueryFilter:
         """設定分頁"""
         self.limit = limit
         self.offset = offset
+        return self
+
+    def set_source_fields(self, fields: Optional[List[str]]) -> "QueryFilter":
+        """Set which fields to return in the response (_source parameter)
+
+        Args:
+            fields: List of field names to return. None returns all fields,
+                   empty list returns no fields (only metadata)
+        """
+        self.source_fields = fields
         return self
 
 
@@ -193,7 +204,7 @@ class StorageInterface(ABC):
         pass
 
     @abstractmethod
-    def get_by_id(self, data_type: DataType, doc_id: str) -> Optional[Dict[str, Any]]:
+    def get_by_id(self, data_type: DataType, doc_id: str, source_fields: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         """根據 ID 取得文檔"""
         pass
 

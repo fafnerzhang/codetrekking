@@ -3,26 +3,19 @@
 Activity Processor - Processes FIT files for fitness/workout activity data (sessions, laps, records)
 """
 import re
-import statistics
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Union, IO
 from pathlib import Path
 import time
 
-# Import garmin_fit_sdk only
-try:
-    from garmin_fit_sdk import Decoder, Stream
-    GARMIN_FIT_SDK_AVAILABLE = True
-except ImportError:
-    GARMIN_FIT_SDK_AVAILABLE = False
-    raise ImportError("garmin_fit_sdk is required. Install with: uv add garmin-fit-sdk")
+# fitparse is used instead of garmin_fit_sdk for direct FIT file processing
 
 from ..storage.interface import (
     DataType, QueryFilter, AggregationQuery,
     ValidationError, StorageError
 )
 from .interface import (
-    FitnessFileProcessor, DataSourceType, ProcessingResult, ProcessingStatus,
+    FitnessFileProcessor, ProcessingResult, ProcessingStatus,
     ProcessingOptions, DataValidator, DataTransformer,
     UnsupportedFormatError, TransformationError
 )
@@ -63,7 +56,7 @@ class ActivityFieldMapper:
         self.environmental_field_names = {
             # Direct field name mappings (case-insensitive)
             'baseline temperature': 'baseline_temperature',
-            'baseline humidity': 'baseline_humidity', 
+            'baseline humidity': 'baseline_humidity',
             'baseline elevation': 'baseline_elevation',
             'air power': 'air_power',
             'stryd temperature': 'stryd_temperature',
@@ -78,6 +71,25 @@ class ActivityFieldMapper:
             'wind_direction': 'wind_direction',
             'barometric_pressure': 'barometric_pressure',
             'air_pressure': 'air_pressure'
+        }
+
+        # Power field name mappings for common camelCase/space-separated variations
+        self.power_field_mappings = {
+            'lap power': 'lap_power',
+            'form power': 'form_power',
+            'air power': 'air_power',
+            'power': 'power'
+        }
+
+        # Running dynamics field name mappings
+        self.running_dynamics_mappings = {
+            'vertical oscillation': 'vertical_oscillation',
+            'stance time': 'stance_time',
+            'step length': 'step_length',
+            'vertical ratio': 'vertical_ratio',
+            'ground time': 'ground_time',
+            'impact loading rate': 'impact_loading_rate',
+            'leg spring stiffness': 'leg_spring_stiffness'
         }
         
         # Field categories for better organization
@@ -132,13 +144,15 @@ class ActivityFieldMapper:
             'zone_fields': ['hr_zone', 'power_zone', 'pace_zone', 'cadence_zone'],
         }
         
-        # Unknown field patterns to exclude
+        # Minimal unknown field patterns to exclude (very restrictive due to updated Global FIT Profile)
+        # We now preserve most unknown fields with metadata instead of filtering them out
         self.unknown_patterns = [
-            r'^unknown_\d+$',           # unknown_123
-            r'^field_\d+$',             # field_123  
-            r'^data_\d+$',              # data_123
-            r'.*_unknown_.*',           # any_unknown_field
-            r'.*_\d+_\d+$',            # field_12_34
+            r'^unknown_\d+_\d+$',       # unknown_123_456 (nested unknown fields)
+            r'^field_\d+_\d+$',         # field_123_456 (nested field patterns)
+            r'^data_\d+_\d+$',          # data_123_456 (nested data patterns)
+            # Removed: r'^unknown_\d+$' - preserve these with metadata for complete data coverage
+            # Removed: r'^field_\d+$' - preserve these with metadata
+            # Removed: r'^data_\d+$' - preserve these with metadata
         ]
     
     def should_include_field(self, field_name: str) -> bool:
@@ -303,18 +317,40 @@ class ActivityFieldMapper:
         # Add general fields to document root for better accessibility
         if additional_fields:
             doc['additional_fields'] = additional_fields
-        
+
         return doc
     
     def _normalize_field_name(self, field_name: str) -> str:
         """Normalize field name for consistent mapping"""
-        # Check if it's a known environmental field that needs mapping
         field_lower = field_name.lower()
+
+        # Check specific mappings first
         if field_lower in self.environmental_field_names:
             return self.environmental_field_names[field_lower]
-        
-        # Convert spaces to underscores and make lowercase for consistency
-        normalized = field_name.lower().replace(' ', '_')
+        if field_lower in self.power_field_mappings:
+            return self.power_field_mappings[field_lower]
+        if field_lower in self.running_dynamics_mappings:
+            return self.running_dynamics_mappings[field_lower]
+
+        # Convert camelCase and space-separated names to snake_case
+        normalized = self._convert_to_snake_case(field_name)
+        return normalized
+
+    def _convert_to_snake_case(self, field_name: str) -> str:
+        """Convert camelCase and space-separated field names to snake_case"""
+        import re
+
+        # First handle space-separated words (like "Lap Power", "Form Power", etc.)
+        # Convert spaces to underscores and make lowercase
+        normalized = field_name.replace(' ', '_').lower()
+
+        # Handle camelCase conversion (if any camelCase remains)
+        # Insert underscore before uppercase letters that follow lowercase letters
+        normalized = re.sub('([a-z0-9])([A-Z])', r'\1_\2', normalized).lower()
+
+        # Clean up any double underscores
+        normalized = re.sub('_+', '_', normalized)
+
         return normalized
     
     def _process_field_value(self, field_name: str, field_value: Any) -> Any:
@@ -322,22 +358,51 @@ class ActivityFieldMapper:
         # Handle datetime objects
         if hasattr(field_value, 'isoformat'):
             return field_value
-        
+
         # Handle enum values
         if hasattr(field_value, 'name'):
             return str(field_value)
-        
-        # Handle numeric values
+
+        # Handle numeric values with NaN/infinity sanitization
         if isinstance(field_value, (int, float)):
+            if isinstance(field_value, float):
+                import math
+                if math.isnan(field_value) or math.isinf(field_value):
+                    return None  # Convert NaN/infinity to None (null in JSON)
+
+            # Validate numeric fields - filter out invalid sentinel values
+            if any(keyword in field_name.lower() for keyword in ['power', 'speed', 'pace', 'heart_rate', 'respiration']):
+                # Common invalid/sentinel values in FIT files
+                if field_value in [65535, 65534, 255, -1, 0xFFFF, 0xFF]:
+                    return None
+
+                # Field-specific range validation
+                if 'power' in field_name.lower():
+                    # Reasonable power range (watts)
+                    if field_value > 2000 or field_value < 0:
+                        return None
+                elif 'speed' in field_name.lower():
+                    # Reasonable speed range (m/s) - max ~50 km/h for running
+                    if field_value > 15 or field_value < 0:
+                        return None
+                elif 'heart_rate' in field_name.lower():
+                    # Reasonable heart rate range (bpm)
+                    if field_value > 220 or field_value < 30:
+                        return None
+                elif 'respiration' in field_name.lower():
+                    # Reasonable respiration rate (breaths per minute)
+                    if field_value > 60 or field_value < 5:
+                        return None
+
             return field_value
-        
+
         # Handle string values
         if isinstance(field_value, str):
             return field_value
-        
+
         # Convert other types to string
         return str(field_value)
-    
+
     def _handle_gps_field(self, doc: Dict[str, Any], field_name: str, field_value: Any) -> None:
         """Handle GPS coordinate fields"""
         if 'lat' in field_name.lower():
@@ -369,61 +434,545 @@ class ActivityFieldMapper:
             doc[location_key]['lon'] = coord
 
     def aggregate_record_power_data(self, fit_file, session_doc: Dict[str, Any]) -> Dict[str, Any]:
-        """Aggregate power data from record messages to enhance session data"""
+        """Enhanced power data aggregation with proper developer field handling"""
         try:
             records = list(fit_file.get_messages('record'))
             if not records:
                 return session_doc
-            
-            # Collect power values from records
-            power_data = {
-                'air_power': [],
-                'power': [],
-                'form_power': []
+
+            # Get power source information from device_info messages
+            power_sources = self._identify_power_sources(fit_file)
+
+            # Dynamically discover power fields from developer field definitions
+            power_field_definitions = self._get_power_field_definitions(fit_file)
+
+            # Collect power values from records with source tracking
+            power_data = {}
+            power_metadata = {
+                'sources': power_sources,
+                'field_definitions': power_field_definitions,
+                'record_count': len(records)
             }
-            
+
             for record in records:
+                # Process standard power fields
                 for field in record.fields:
-                    if field.value is not None:
-                        field_name_lower = field.name.lower().replace(' ', '_')
-                        
-                        if field_name_lower in power_data and field.value > 0:
-                            power_data[field_name_lower].append(field.value)
-            
-            # Calculate statistics for each power type
-            power_stats = {}
+                    if field.value is not None and self._is_power_field(field.name):
+                        field_name = self._normalize_power_field_name(field.name)
+                        if field.value > 0 and field.value < 2000:  # Valid power range
+                            if field_name not in power_data:
+                                power_data[field_name] = []
+                            power_data[field_name].append(field.value)
+
+                # Process developer power fields with field definition lookup
+                if hasattr(record, 'developer_fields'):
+                    for dev_field_id, dev_field_value in record.developer_fields.items():
+                        if dev_field_value is not None:
+                            field_name = power_field_definitions.get(dev_field_id)
+                            if field_name and self._is_power_field(field_name):
+                                normalized_name = self._normalize_power_field_name(field_name)
+                                if dev_field_value > 0 and dev_field_value < 2000:
+                                    if normalized_name not in power_data:
+                                        power_data[normalized_name] = []
+                                    power_data[normalized_name].append(dev_field_value)
+
+            # Calculate comprehensive power statistics with avg, min, max for each field
+            if 'power_fields' not in session_doc:
+                session_doc['power_fields'] = {}
+
             for power_type, values in power_data.items():
                 if values:
-                    power_stats[power_type] = {
-                        f'avg_{power_type}': sum(values) / len(values),
-                        f'max_{power_type}': max(values),
-                        f'min_{power_type}': min(values)
-                    }
-            
-            # Add power statistics to session document
-            if power_stats:
-                if 'power_fields' not in session_doc:
-                    session_doc['power_fields'] = {}
-                
-                # Flatten the power stats into power_fields
-                for power_type, stats in power_stats.items():
-                    session_doc['power_fields'].update(stats)
-                
-                # Also add to additional_fields for reference
+                    session_doc['power_fields'][f'avg_{power_type}'] = round(sum(values) / len(values), 2)
+                    session_doc['power_fields'][f'max_{power_type}'] = max(values)
+                    session_doc['power_fields'][f'min_{power_type}'] = min(values)
+
+            # Add power metadata for debugging and analysis
+            if power_data:
+                if 'power_data_availability' not in session_doc:
+                    session_doc['power_data_availability'] = {}
+
+                session_doc['power_data_availability'].update({
+                    'has_power_data': bool(power_data),
+                    'power_values_count': sum(len(values) for values in power_data.values()),
+                    'power_metrics_available': list(power_data.keys()),
+                    'power_sources': [source.get('manufacturer', 'unknown') for source in power_sources],
+                    'developer_field_count': len(power_field_definitions)
+                })
+
+                # Enhanced metadata in additional_fields
                 if 'additional_fields' not in session_doc:
                     session_doc['additional_fields'] = {}
                 session_doc['additional_fields']['record_power_aggregated'] = True
-                session_doc['additional_fields']['power_record_count'] = len(records)
-            
+                session_doc['additional_fields']['power_metadata'] = power_metadata
+
             return session_doc
+
+        except Exception as e:
+            logger.warning(f"Power aggregation failed: {e}")
+            return session_doc
+
+    def _identify_power_sources(self, fit_file) -> List[Dict[str, Any]]:
+        """Identify devices that can provide power data"""
+        power_sources = []
+        try:
+            for device_info in fit_file.get_messages('device_info'):
+                device_data = {}
+                for field in device_info.fields:
+                    if field.value is not None:
+                        device_data[field.name] = field.value
+
+                # Check if device can provide power (ANT+ power meter, Stryd, etc.)
+                if (device_data.get('device_type') in ['bike_power', 'stride_speed_distance'] or
+                    device_data.get('manufacturer') in ['stryd', 'garmin'] or
+                    'power' in str(device_data.get('product_name', '')).lower()):
+                    power_sources.append(device_data)
+        except Exception as e:
+            logger.debug(f"Could not identify power sources: {e}")
+
+        return power_sources
+
+    def _get_power_field_definitions(self, fit_file) -> Dict[int, str]:
+        """Extract power-related field definitions from developer fields"""
+        power_field_defs = {}
+        try:
+            for field_def in fit_file.get_messages('field_definition'):
+                field_data = {}
+                for field in field_def.fields:
+                    if field.value is not None:
+                        field_data[field.name] = field.value
+
+                field_name = field_data.get('field_name', '').lower()
+                if self._is_power_field(field_name):
+                    field_num = field_data.get('field_definition_number')
+                    if field_num is not None:
+                        power_field_defs[field_num] = field_name
+        except Exception as e:
+            logger.debug(f"Could not extract field definitions: {e}")
+
+        return power_field_defs
+
+    def _is_power_field(self, field_name: str) -> bool:
+        """Check if field name indicates a power-related metric"""
+        field_lower = field_name.lower()
+        power_indicators = ['power', 'watt', 'form_power', 'air_power', 'lap_power']
+        return any(indicator in field_lower for indicator in power_indicators)
+
+    def _normalize_power_field_name(self, field_name: str) -> str:
+        """Normalize power field names for consistency"""
+        normalized = field_name.lower().replace(' ', '_').replace('-', '_')
+
+        # Map common variations to standard names
+        power_name_mapping = {
+            'power': 'power',
+            'total_power': 'power',
+            'air_power': 'air_power',
+            'form_power': 'form_power',
+            'lap_power': 'lap_power'
+        }
+
+        return power_name_mapping.get(normalized, normalized)
+
+    def aggregate_record_running_dynamics_data(self, fit_file, session_doc: Dict[str, Any]) -> Dict[str, Any]:
+        """Aggregate running dynamics static fields (avg, min, max) from record data"""
+        try:
+            records = list(fit_file.get_messages('record'))
+            if not records:
+                return session_doc
+
+            # Collect running dynamics values from records
+            running_dynamics_data = {}
+
+            for record in records:
+                # Process standard running dynamics fields
+                for field in record.fields:
+                    if field.value is not None and self._is_running_dynamics_field(field.name):
+                        field_name = self._normalize_running_dynamics_field_name(field.name)
+                        processed_value = self._process_running_dynamics_value(field.name, field.value)
+                        if processed_value is not None:
+                            if field_name not in running_dynamics_data:
+                                running_dynamics_data[field_name] = []
+                            running_dynamics_data[field_name].append(processed_value)
+
+            # Calculate comprehensive running dynamics statistics with avg, min, max for each field
+            if 'running_dynamics' not in session_doc:
+                session_doc['running_dynamics'] = {}
+
+            for dynamics_type, values in running_dynamics_data.items():
+                if values:
+                    session_doc['running_dynamics'][f'avg_{dynamics_type}'] = round(sum(values) / len(values), 2)
+                    session_doc['running_dynamics'][f'max_{dynamics_type}'] = max(values)
+                    session_doc['running_dynamics'][f'min_{dynamics_type}'] = min(values)
+
+            # Add running dynamics metadata for debugging and analysis
+            if running_dynamics_data:
+                if 'running_dynamics_data_availability' not in session_doc:
+                    session_doc['running_dynamics_data_availability'] = {}
+
+                session_doc['running_dynamics_data_availability'].update({
+                    'has_running_dynamics_data': bool(running_dynamics_data),
+                    'running_dynamics_values_count': sum(len(values) for values in running_dynamics_data.values()),
+                    'running_dynamics_metrics_available': list(running_dynamics_data.keys())
+                })
+
+                # Enhanced metadata in additional_fields
+                if 'additional_fields' not in session_doc:
+                    session_doc['additional_fields'] = {}
+                session_doc['additional_fields']['record_running_dynamics_aggregated'] = True
+
+            return session_doc
+
+        except Exception as e:
+            logger.warning(f"Running dynamics aggregation failed: {e}")
+            return session_doc
+
+    def _is_running_dynamics_field(self, field_name: str) -> bool:
+        """Check if field name indicates a running dynamics metric"""
+        field_lower = field_name.lower()
+        running_dynamics_indicators = [
+            'vertical_oscillation', 'stance_time', 'step_length', 'vertical_ratio',
+            'ground_contact_time', 'ground_time', 'impact_loading_rate', 'leg_spring_stiffness',
+            'stance_time_percent', 'vertical_oscillation_percent', 'ground_contact_balance',
+            'left_right_balance', 'duty_factor', 'flight_time', 'form_power_ratio',
+            'efficiency_score', 'stride_frequency', 'step_frequency'
+        ]
+        return any(indicator in field_lower for indicator in running_dynamics_indicators)
+
+    def _normalize_running_dynamics_field_name(self, field_name: str) -> str:
+        """Normalize running dynamics field names for consistency"""
+        normalized = field_name.lower().replace(' ', '_').replace('-', '_')
+
+        # Map common variations to standard names
+        running_dynamics_name_mapping = {
+            'vertical_oscillation': 'vertical_oscillation',
+            'stance_time': 'stance_time',
+            'step_length': 'step_length',
+            'vertical_ratio': 'vertical_ratio',
+            'ground_contact_time': 'ground_contact_time',
+            'ground_time': 'ground_time',
+            'impact_loading_rate': 'impact_loading_rate',
+            'leg_spring_stiffness': 'leg_spring_stiffness',
+            'stance_time_percent': 'stance_time_percent',
+            'vertical_oscillation_percent': 'vertical_oscillation_percent',
+            'ground_contact_balance': 'ground_contact_balance',
+            'left_right_balance': 'left_right_balance',
+            'duty_factor': 'duty_factor',
+            'flight_time': 'flight_time',
+            'form_power_ratio': 'form_power_ratio',
+            'efficiency_score': 'efficiency_score',
+            'stride_frequency': 'stride_frequency',
+            'step_frequency': 'step_frequency'
+        }
+
+        return running_dynamics_name_mapping.get(normalized, normalized)
+
+    def _process_running_dynamics_value(self, field_name: str, field_value: Any) -> Any:
+        """Process running dynamics field value with validation"""
+        if not isinstance(field_value, (int, float)):
+            return None
+
+        # Apply range validation for running dynamics
+        field_lower = field_name.lower()
+
+        # Common invalid/sentinel values in FIT files
+        if field_value in [65535, 65534, 255, -1, 0xFFFF, 0xFF]:
+            return None
+
+        # Field-specific range validation
+        if 'vertical_oscillation' in field_lower:
+            # Vertical oscillation in mm (20-150 mm is reasonable)
+            if field_value > 150 or field_value <= 0:
+                return None
+        elif 'stance_time' in field_lower:
+            # Stance time in ms (150-400 ms is reasonable)
+            if field_value > 400 or field_value < 100:
+                return None
+        elif 'step_length' in field_lower:
+            # Step length in mm (600-3000 mm is reasonable)
+            if field_value > 3000 or field_value < 200:
+                return None
+        elif 'vertical_ratio' in field_lower:
+            # Vertical ratio in % (2-50% is reasonable)
+            if field_value > 50 or field_value <= 0:
+                return None
+        elif 'ground_contact' in field_lower or 'ground_time' in field_lower:
+            # Ground contact time in ms (similar to stance time)
+            if field_value > 400 or field_value < 100:
+                return None
+        elif 'impact_loading_rate' in field_lower:
+            # Impact loading rate (10-100 BW/s is reasonable)
+            if field_value > 100 or field_value <= 0:
+                return None
+        elif 'leg_spring_stiffness' in field_lower:
+            # Leg spring stiffness (5-25 kN/m is reasonable)
+            if field_value > 25 or field_value <= 0:
+                return None
+        elif any(x in field_lower for x in ['balance', 'percent']):
+            # Balance and percentage fields (0-100%)
+            if field_value > 100 or field_value < 0:
+                return None
+        elif 'frequency' in field_lower:
+            # Step/stride frequency (120-220 steps/min is reasonable)
+            if field_value > 300 or field_value <= 0:
+                return None
+        elif field_value < 0:
+            # For other fields, just filter negatives
+            return None
+
+        return field_value
+
+
+class StrydMetricsAggregator:
+    """Unified Stryd metrics aggregator - eliminate special cases"""
+    
+    # All Stryd metrics that can be aggregated from records
+    STRYD_METRICS = {
+        # Power metrics (actual FIT field names)
+        'power', 'enhanced_power', 'air_power', 'form_power', 'lap_power',
+        # Biomechanics metrics (actual FIT field names found in data)
+        'vertical_oscillation', 'vertical_ratio',
+        'stance_time', 'stance_time_balance', 'stance_time_percent',
+        'ground_time', 'step_length',
+        'leg_spring_stiffness', 'impact_loading_rate',
+        # Environmental metrics
+        'stryd_temperature', 'stryd_humidity',
+        # Static/baseline metrics
+        'baseline_temperature', 'baseline_humidity', 'baseline_elevation',
+        'weight', 'height'
+    }
+    
+    # Metrics that should use first/last value instead of aggregation
+    STATIC_METRICS = {
+        'baseline_temperature', 'baseline_humidity', 'baseline_elevation',
+        'weight', 'height'
+    }
+    
+    def __init__(self):
+        self.logger = get_logger(__name__)
+
+    def _process_field_value(self, field_name: str, field_value: Any) -> Any:
+        """Apply same field validation as ActivityProcessor to filter sentinel values"""
+        # Handle numeric values with NaN/infinity sanitization
+        if isinstance(field_value, (int, float)):
+            if isinstance(field_value, float):
+                import math
+                if math.isnan(field_value) or math.isinf(field_value):
+                    return None
+            # Validate numeric fields - filter out invalid sentinel values
+            if any(keyword in field_name.lower() for keyword in ['power', 'speed', 'pace', 'heart_rate', 'respiration', 'stryd', 'vertical', 'stance', 'step', 'stiffness', 'impact', 'humidity', 'temperature']):
+                if field_value in [65535, 65534, 255, -1, 0xFFFF, 0xFF]:
+                    return None
+        return field_value
+
+    def aggregate_for_session(self, fit_file, session_doc: Dict[str, Any]) -> Dict[str, Any]:
+        """Aggregate all Stryd metrics for the entire session"""
+        try:
+            records = list(fit_file.get_messages('record'))
+            if not records:
+                return {}
+            
+            return self._aggregate_stryd_metrics(records, session_doc.get('timestamp'))
             
         except Exception as e:
-            # Don't fail the entire extraction if power aggregation fails
-            return session_doc
+            self.logger.warning(f"Session Stryd aggregation failed: {e}")
+            return {}
+    
+    def aggregate_for_time_range(self, records: List, start_time, end_time) -> Dict[str, Any]:
+        """Aggregate Stryd metrics for a specific time range (lap)"""
+        try:
+            if not records or not start_time:
+                return {}
+            
+            # Filter records within time range
+            filtered_records = []
+            for record in records:
+                record_time = self._get_record_timestamp(record)
+                if record_time and start_time <= record_time <= end_time:
+                    filtered_records.append(record)
+            
+            if not filtered_records:
+                return {}
+            
+            return self._aggregate_stryd_metrics(filtered_records, start_time)
+            
+        except Exception as e:
+            self.logger.warning(f"Time range Stryd aggregation failed: {e}")
+            return {}
+    
+    def _aggregate_stryd_metrics(self, records: List, base_timestamp) -> Dict[str, Any]:
+        """Core aggregation logic for Stryd metrics"""
+        stryd_data = {metric: [] for metric in self.STRYD_METRICS}
+        
+        # Collect Stryd values from all records
+        for record in records:
+            for field in record.fields:
+                if field.value is not None and field.name in self.STRYD_METRICS:
+                    # Apply same validation as _process_field_value to filter sentinel values
+                    processed_value = self._process_field_value(field.name, field.value)
+                    if processed_value is None:
+                        continue
+
+                    # Only collect valid numeric values, exclude 0 for most metrics
+                    if isinstance(processed_value, (int, float)):
+                        # For most Stryd metrics, 0 is invalid data
+                        if field.name in ['power', 'enhanced_power', 'air_power', 'form_power', 'lap_power',
+                                        'vertical_oscillation', 'impact_loading_rate', 'leg_spring_stiffness']:
+                            # These metrics should never be 0 during active movement
+                            if processed_value > 0:
+                                stryd_data[field.name].append(processed_value)
+                        elif field.name in ['stryd_temperature', 'stryd_humidity']:
+                            # Environmental metrics: 0 is invalid for temperature/humidity
+                            if processed_value > 0:
+                                stryd_data[field.name].append(processed_value)
+                        elif field.name in ['vertical_ratio']:
+                            # Vertical ratio should be > 0 (percentage)
+                            if processed_value > 0:
+                                stryd_data[field.name].append(processed_value)
+                        else:
+                            # For time/stance metrics, very small values might be invalid
+                            if field.name in ['stance_time', 'ground_time']:
+                                # Stance time should be reasonable (> 100ms)
+                                if processed_value >= 100:
+                                    stryd_data[field.name].append(processed_value)
+                            elif field.name in ['step_length']:
+                                # Step length should be reasonable (> 200mm)
+                                if processed_value >= 200:
+                                    stryd_data[field.name].append(processed_value)
+                            else:
+                                # For other metrics, just filter negatives
+                                if processed_value >= 0:
+                                    stryd_data[field.name].append(processed_value)
+
+        # Debug: Log what we collected
+        collected_fields = {k: len(v) for k, v in stryd_data.items() if v}
+        if collected_fields:
+            self.logger.info(f"Collected Stryd fields: {collected_fields}")
+        
+        # Calculate statistics
+        aggregated_metrics = {}
+        
+        for metric, values in stryd_data.items():
+            if not values:
+                continue
+                
+            if metric in self.STATIC_METRICS:
+                # For static metrics, use first available value
+                aggregated_metrics[f'avg_{metric}'] = values[0]
+            else:
+                # For dynamic metrics, calculate full statistics
+                import math
+                avg_val = sum(values) / len(values)
+                max_val = max(values)
+                min_val = min(values)
+
+                # Sanitize NaN/infinity values
+                if not (math.isnan(avg_val) or math.isinf(avg_val)):
+                    aggregated_metrics[f'avg_{metric}'] = avg_val
+                if not (math.isnan(max_val) or math.isinf(max_val)):
+                    aggregated_metrics[f'max_{metric}'] = max_val
+                if not (math.isnan(min_val) or math.isinf(min_val)):
+                    aggregated_metrics[f'min_{metric}'] = min_val
+        
+        # Structure the results with power data availability flags
+        if aggregated_metrics:
+            # Check if power-related metrics were found
+            power_metrics = ['power', 'enhanced_power', 'air_power', 'form_power', 'lap_power']
+            power_data_available = any(
+                any(f'_{metric}' in key for key in aggregated_metrics.keys())
+                for metric in power_metrics
+            )
+
+            # Count actual power values collected
+            power_values_count = sum(len(stryd_data.get(metric, [])) for metric in power_metrics)
+
+            result = {
+                'stryd_metrics': aggregated_metrics,
+                'power_data_availability': {
+                    'has_power_data': power_data_available,
+                    'power_values_count': power_values_count,
+                    'power_metrics_available': [
+                        metric for metric in power_metrics
+                        if any(f'_{metric}' in key for key in aggregated_metrics.keys())
+                    ]
+                },
+                'stryd_aggregation_metadata': {
+                    'record_count': len(records),
+                    'metrics_extracted': list(aggregated_metrics.keys()),
+                    'aggregation_timestamp': base_timestamp.isoformat() if hasattr(base_timestamp, 'isoformat') else str(base_timestamp)
+                }
+            }
+            return result
+        
+        return {}
+    
+    def _get_record_timestamp(self, record):
+        """Extract timestamp from a record"""
+        for field in record.fields:
+            if field.name == 'timestamp' and field.value is not None:
+                return field.value
+        return None
+    
+    def validate_stryd_metrics(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate Stryd metrics ranges"""
+        if 'stryd_metrics' not in data:
+            return data
+            
+        stryd_ranges = {
+            # Power metrics (watts)
+            'avg_power': (0, 2000), 'max_power': (0, 2000), 'min_power': (0, 2000),
+            'avg_enhanced_power': (0, 2000), 'max_enhanced_power': (0, 2000), 'min_enhanced_power': (0, 2000),
+            'avg_air_power': (0, 1000), 'max_air_power': (0, 1000), 'min_air_power': (0, 1000),
+            'avg_form_power': (0, 100), 'max_form_power': (0, 100), 'min_form_power': (0, 100),
+            'avg_lap_power': (0, 2000), 'max_lap_power': (0, 2000), 'min_lap_power': (0, 2000),
+
+            # Biomechanics metrics (actual field names from FIT files)
+            'avg_vertical_oscillation': (20, 150), 'max_vertical_oscillation': (20, 150), 'min_vertical_oscillation': (20, 150),  # mm
+            'avg_vertical_ratio': (2, 50), 'max_vertical_ratio': (2, 50), 'min_vertical_ratio': (2, 50),  # %
+            'avg_stance_time': (150, 400), 'max_stance_time': (150, 400), 'min_stance_time': (150, 400),  # ms
+            'avg_stance_time_balance': (30, 70), 'max_stance_time_balance': (30, 70), 'min_stance_time_balance': (30, 70),  # %
+            'avg_stance_time_percent': (10, 60), 'max_stance_time_percent': (10, 60), 'min_stance_time_percent': (10, 60),  # %
+            'avg_ground_time': (150, 400), 'max_ground_time': (150, 400), 'min_ground_time': (150, 400),  # ms
+            'avg_step_length': (600, 3000), 'max_step_length': (600, 3000), 'min_step_length': (600, 3000),  # mm
+            'avg_leg_spring_stiffness': (5, 25), 'max_leg_spring_stiffness': (5, 25), 'min_leg_spring_stiffness': (5, 25),  # kN/m
+            'avg_impact_loading_rate': (10, 100), 'max_impact_loading_rate': (10, 100), 'min_impact_loading_rate': (10, 100),  # BW/s
+
+            # Environmental metrics (wider ranges, might be Fahrenheit or unusual values)
+            'avg_stryd_temperature': (-20, 200), 'max_stryd_temperature': (-20, 200), 'min_stryd_temperature': (-20, 200),  # Mixed units
+            'avg_stryd_humidity': (10, 500), 'max_stryd_humidity': (10, 500), 'min_stryd_humidity': (10, 500),  # Might have unusual scaling
+
+            # User metrics (0 values allowed for missing data)
+            'avg_weight': (0, 200), 'avg_height': (0, 250),  # kg, cm
+        }
+        
+        stryd_metrics = data['stryd_metrics']
+        invalid_metrics = []
+        filtered_metrics = {}
+
+        for metric_name, metric_value in stryd_metrics.items():
+            if metric_name in stryd_ranges:
+                min_val, max_val = stryd_ranges[metric_name]
+                if min_val <= metric_value <= max_val:
+                    # Keep valid values
+                    filtered_metrics[metric_name] = metric_value
+                else:
+                    # Filter out invalid values and log them
+                    invalid_metrics.append(f"{metric_name}: {metric_value} not in range [{min_val}, {max_val}]")
+            else:
+                # Keep metrics without validation ranges
+                filtered_metrics[metric_name] = metric_value
+
+        if invalid_metrics:
+            self.logger.warning(f"Filtered out invalid Stryd metrics: {invalid_metrics}")
+
+        # Update data with filtered metrics
+        data['stryd_metrics'] = filtered_metrics
+        return data
 
 
 class ActivityValidator(DataValidator):
     """Activity data validator for fitness/workout data"""
+    
+    def __init__(self):
+        self.stryd_aggregator = StrydMetricsAggregator()
     
     def validate_session_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Validate session data"""
@@ -441,6 +990,9 @@ class ActivityValidator(DataValidator):
         if "avg_heart_rate" in data and data["avg_heart_rate"] is not None:
             if data["avg_heart_rate"] < 30 or data["avg_heart_rate"] > 250:
                 raise ValidationError("Invalid avg_heart_rate value")
+        
+        # Validate metrics ranges if present
+        data = self.stryd_aggregator.validate_stryd_metrics(data)
         
         return data
     
@@ -474,6 +1026,9 @@ class ActivityValidator(DataValidator):
         for field in required_fields:
             if field not in data or data[field] is None:
                 raise ValidationError(f"Missing required field: {field}")
+        
+        # Validate metrics ranges if present
+        data = self.stryd_aggregator.validate_stryd_metrics(data)
         
         return data
     
@@ -588,51 +1143,101 @@ class ActivityTransformer(DataTransformer):
         
         return outlier_indices
 
+    def transform_session_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform session data"""
+        # Apply coordinate transformation if location data exists
+        data = self.transform_coordinates(data)
+
+        # Normalize units
+        data = self.normalize_units(data)
+
+        # Ensure timestamp is in proper format
+        if 'start_time' in data and isinstance(data['start_time'], str):
+            # Ensure start_time is properly formatted
+            if not data['start_time'].endswith('Z') and '+' not in data['start_time']:
+                data['start_time'] = data['start_time'] + 'Z'
+
+        return data
+
+    def transform_record_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform record data"""
+        # Apply coordinate transformation if location data exists
+        data = self.transform_coordinates(data)
+
+        # Normalize units
+        data = self.normalize_units(data)
+
+        return data
+
+    def transform_lap_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Transform lap data"""
+        # Apply coordinate transformation if location data exists
+        data = self.transform_coordinates(data)
+
+        # Normalize units
+        data = self.normalize_units(data)
+
+        return data
+
 
 class ActivityProcessor(FitnessFileProcessor):
-    """Activity processor for fitness/workout FIT files (sessions, laps, records)"""
-    
+    """Activity processor for fitness/workout FIT files (sessions, laps, records) using fitparse"""
+
     def __init__(self, storage, options: Optional[ProcessingOptions] = None):
         super().__init__(storage, options)
         self.validator = ActivityValidator()
         self.transformer = ActivityTransformer()
         self.field_mapper = ActivityFieldMapper()
+        self.stryd_aggregator = StrydMetricsAggregator()
+        # Import and initialize the fitparse processor
+        from .fitparse_processor import FitParseProcessor
+        self.fitparse_processor = FitParseProcessor()
+        # Store current fit data and records for lap processing
+        self.current_fit_data = None
+        self.current_records = None
     
-    def process(self, source: Union[str, Path, IO], 
-               user_id: str, 
+    def process(self, source: Union[str, Path, IO],
+               user_id: str,
                activity_id: Optional[str] = None) -> ProcessingResult:
-        """Process fitness FIT file for activity/workout data"""
+        """Process fitness FIT file for activity/workout data using fitparse"""
         start_time = time.time()
-        
+
         if activity_id is None:
             activity_id = f"activity_{user_id}_{int(datetime.now().timestamp())}"
-        
+
         result = ProcessingResult(
             status=ProcessingStatus.PROCESSING,
             metadata={"activity_id": activity_id, "user_id": user_id}
         )
-        
+
         try:
             # Validate file
             if not self.validate_source(source):
                 result.status = ProcessingStatus.FAILED
                 result.add_error("Invalid fitness FIT file format")
                 return result
-            
-            # Process fitness FIT file
-            fit = self._parse_fit_file(source)
-            
-            # Process different data types
-            session_result = self.process_session_data(fit, activity_id, user_id)
-            record_result = self.process_record_data(fit, activity_id, user_id)
-            lap_result = self.process_lap_data(fit, activity_id, user_id)
-            
+
+            # Convert source to file path string if needed
+            file_path = str(source) if isinstance(source, (str, Path)) else source
+
+            # Process fitness FIT file using fitparse
+            fit_data = self.fitparse_processor.process_fit_file(file_path, activity_id, user_id)
+
+            # Store processed data for compatibility with existing code
+            self.current_fit_data = fit_data
+            self.current_records = fit_data.get('records', [])
+
+            # Process different data types using the fitparse results
+            session_result = self._process_fitparse_session_data(fit_data['session'])
+            record_result = self._process_fitparse_record_data(fit_data['records'])
+            lap_result = self._process_fitparse_lap_data(fit_data['laps'])
+
             # Aggregate results
-            result.successful_records = (session_result.successful_records + 
-                                       record_result.successful_records + 
+            result.successful_records = (session_result.successful_records +
+                                       record_result.successful_records +
                                        lap_result.successful_records)
-            result.failed_records = (session_result.failed_records + 
-                                   record_result.failed_records + 
+            result.failed_records = (session_result.failed_records +
+                                   record_result.failed_records +
                                    lap_result.failed_records)
             result.total_records = result.successful_records + result.failed_records
             result.errors.extend(session_result.errors)
@@ -640,13 +1245,14 @@ class ActivityProcessor(FitnessFileProcessor):
             result.errors.extend(lap_result.errors)
             result.warnings.extend(session_result.warnings)
             result.warnings.extend(record_result.warnings)
-            
+
             result.metadata.update({
                 "sessions": session_result.successful_records,
                 "records": record_result.successful_records,
-                "laps": lap_result.successful_records
+                "laps": lap_result.successful_records,
+                "power_sources": fit_data.get('metadata', {}).get('power_sources', [])
             })
-            
+
             # Set status
             if result.failed_records == 0:
                 result.status = ProcessingStatus.COMPLETED
@@ -654,474 +1260,208 @@ class ActivityProcessor(FitnessFileProcessor):
                 result.status = ProcessingStatus.PARTIALLY_COMPLETED
             else:
                 result.status = ProcessingStatus.FAILED
-            
+
             result.processing_time = time.time() - start_time
             logger.info(f"✅ Fitness FIT file processed: {result.successful_records} successful, {result.failed_records} failed")
-            
+
         except Exception as e:
             result.status = ProcessingStatus.FAILED
             result.add_error(f"Fitness FIT file processing failed: {e}")
-            result.processing_time = time.time() - start_time
-            logger.error(f"❌ Fitness FIT file processing failed: {e}")
-        
+            logger.error(f"❌ Fitness FIT processing error: {e}")
+
         return result
-    
+
+    def _process_fitparse_session_data(self, session_data: Dict[str, Any]) -> ProcessingResult:
+        """Process session data from fitparse processor"""
+        result = ProcessingResult(status=ProcessingStatus.PROCESSING)
+
+        try:
+            if not session_data:
+                result.add_warning("No session data found")
+                result.status = ProcessingStatus.COMPLETED
+                return result
+
+            # Validate and transform session data
+            validated_doc = self.validator.validate_session_data(session_data)
+            transformed_doc = self.transformer.transform_session_data(validated_doc)
+
+            # Store to storage
+            success = self.storage.index_document(
+                DataType.SESSION,
+                session_data['activity_id'],
+                transformed_doc
+            )
+
+            if success:
+                result.successful_records = 1
+                logger.debug(f"✅ Session data stored for activity {session_data['activity_id']}")
+            else:
+                result.failed_records = 1
+                result.add_error("Failed to store session data")
+
+            result.status = ProcessingStatus.COMPLETED
+
+        except Exception as e:
+            result.failed_records = 1
+            result.add_error(f"Session processing failed: {e}")
+            logger.error(f"❌ Session processing failed: {e}")
+
+        return result
+
+    def _process_fitparse_record_data(self, records_data: List[Dict[str, Any]]) -> ProcessingResult:
+        """Process record data from fitparse processor"""
+        result = ProcessingResult(status=ProcessingStatus.PROCESSING)
+
+        try:
+            if not records_data:
+                result.add_warning("No record data found")
+                result.status = ProcessingStatus.COMPLETED
+                return result
+
+            # Prepare documents for bulk indexing
+            documents = []
+            for record in records_data:
+                try:
+                    validated_doc = self.validator.validate_record_data(record)
+                    transformed_doc = self.transformer.transform_record_data(validated_doc)
+                    transformed_doc['_id'] = f"{record['activity_id']}_{record['sequence']}"
+                    documents.append(transformed_doc)
+                except Exception as e:
+                    result.failed_records += 1
+                    result.add_error(f"Record {record.get('sequence', 'unknown')} validation failed: {e}")
+
+            # Bulk index documents
+            if documents:
+                indexing_result = self.storage.bulk_index(DataType.RECORD, documents)
+                result.successful_records = indexing_result.success_count
+                result.failed_records += indexing_result.failed_count
+
+                if indexing_result.errors:
+                    result.errors.extend(indexing_result.errors)
+
+            result.status = ProcessingStatus.COMPLETED
+            logger.debug(f"✅ Processed {len(records_data)} records: {result.successful_records} successful")
+
+        except Exception as e:
+            result.add_error(f"Record processing failed: {e}")
+            logger.error(f"❌ Record processing failed: {e}")
+
+        return result
+
+    def _process_fitparse_lap_data(self, laps_data: List[Dict[str, Any]]) -> ProcessingResult:
+        """Process lap data from fitparse processor"""
+        result = ProcessingResult(status=ProcessingStatus.PROCESSING)
+
+        try:
+            if not laps_data:
+                result.add_warning("No lap data found")
+                result.status = ProcessingStatus.COMPLETED
+                return result
+
+            # Prepare documents for bulk indexing
+            documents = []
+            for lap in laps_data:
+                try:
+                    validated_doc = self.validator.validate_lap_data(lap)
+                    transformed_doc = self.transformer.transform_lap_data(validated_doc)
+                    transformed_doc['_id'] = f"{lap['activity_id']}_lap_{lap.get('lap_number', len(documents) + 1)}"
+                    documents.append(transformed_doc)
+                except Exception as e:
+                    result.failed_records += 1
+                    result.add_error(f"Lap {lap.get('lap_number', 'unknown')} validation failed: {e}")
+
+            # Bulk index documents
+            if documents:
+                indexing_result = self.storage.bulk_index(DataType.LAP, documents)
+                result.successful_records = indexing_result.success_count
+                result.failed_records += indexing_result.failed_count
+
+                if indexing_result.errors:
+                    result.errors.extend(indexing_result.errors)
+
+            result.status = ProcessingStatus.COMPLETED
+            logger.debug(f"✅ Processed {len(laps_data)} laps: {result.successful_records} successful")
+
+        except Exception as e:
+            result.add_error(f"Lap processing failed: {e}")
+            logger.error(f"❌ Lap processing failed: {e}")
+
+        return result
+
     def validate_source(self, source: Union[str, Path, IO]) -> bool:
-        """Validate fitness FIT file format"""
+        """Validate fitness FIT file format using fitparse"""
         try:
             if isinstance(source, (str, Path)):
                 if not Path(source).exists():
                     return False
-                
+
                 # Check file extension
                 if not str(source).lower().endswith('.fit'):
                     return False
-            
-            # Try to parse with Garmin SDK
-            fit = self._parse_fit_file(source)
-            
-            # Validate by checking if we can get messages
-            try:
-                messages_iter = fit.get_messages()
-                next(messages_iter)
-            except (StopIteration, AttributeError):
-                # File is valid but might be empty, which is okay
-                pass
-            
-            return True
+
+                # Try to parse with fitparse
+                from fitparse import FitFile
+                fit = FitFile(str(source))
+
+                # Validate by checking if we can get messages
+                try:
+                    messages = list(fit.get_messages())
+                    return len(messages) > 0
+                except Exception:
+                    return False
+            else:
+                # For file-like objects, more complex validation needed
+                return True  # Skip validation for IO objects for now
+
         except Exception as e:
             logger.warning(f"Fitness FIT file validation failed: {e}")
             return False
-    
-    def _parse_fit_file(self, source: Union[str, Path, IO]):
-        """Parse FIT file using Garmin SDK only"""
-        if not GARMIN_FIT_SDK_AVAILABLE:
-            raise RuntimeError("garmin_fit_sdk is required. Install with: uv add garmin-fit-sdk")
-        
-        return self._parse_with_garmin_sdk(source)
-    
-    def _parse_with_garmin_sdk(self, source: Union[str, Path, IO]):
-        """Parse FIT file with garmin_fit_sdk"""
-        if isinstance(source, (str, Path)):
-            stream = Stream.from_file(str(source))
-        else:
-            # For file-like objects, read the content
-            content = source.read()
-            source.seek(0)  # Reset position for potential future reads
-            stream = Stream.from_byte_array(content)
-        
-        decoder = Decoder(stream)
-        messages, errors = decoder.read()
-        
-        if errors:
-            logger.warning(f"Garmin FIT SDK parsing errors: {errors}")
-        
-        # Create a precise wrapper for Garmin SDK messages
-        class GarminSDKWrapper:
-            def __init__(self, messages_dict):
-                self.messages_dict = messages_dict
-                self.all_messages = []
-                
-                # Process each message type from Garmin SDK
-                for key, value in messages_dict.items():
-                    if key.endswith('_mesgs') and isinstance(value, list):
-                        # Extract message type name (remove '_mesgs' suffix)
-                        msg_type = key[:-6]  # Remove '_mesgs'
-                        
-                        for msg_data in value:
-                            if isinstance(msg_data, dict):
-                                wrapped_msg = GarminMessage(msg_type, msg_data)
-                                self.all_messages.append(wrapped_msg)
-            
-            def get_messages(self, message_type=None):
-                """Get messages, optionally filtered by type"""
-                if message_type is None:
-                    return iter(self.all_messages)
-                
-                # Filter by message type
-                filtered = []
-                for msg in self.all_messages:
-                    if msg.name == message_type:
-                        filtered.append(msg)
-                return iter(filtered)
-        
-        class GarminMessage:
-            """Wrapper for Garmin SDK message to match expected interface"""
-            def __init__(self, name, data):
-                self.name = name
-                self.fields = []
-                self.developer_fields = {}
-                
-                # Convert message data to field objects
-                if isinstance(data, dict):
-                    for field_name, field_value in data.items():
-                        if field_value is not None:
-                            # Handle developer fields specially
-                            if field_name == 'developer_fields' and isinstance(field_value, dict):
-                                self.developer_fields = field_value
-                                # Also add developer fields as regular fields with meaningful names
-                                self._add_developer_fields_as_fields(field_value)
-                            else:
-                                field = GarminField(field_name, field_value)
-                                self.fields.append(field)
-            
-            def _add_developer_fields_as_fields(self, developer_fields):
-                """Add developer fields as regular fields with meaningful names"""
-                # Build field mapping based on field definitions found in FIT file
-                # Using original field names from FIT specification (cleaner, without units)
-                # Based on actual FIT file analysis with complete Stryd field mapping
-                developer_field_mapping = {
-                    # Session developer fields (from field definitions)
-                    0: 'cp',                     # CP (Critical Power)
-                    1: 'baseline_humidity',      # Baseline Humidity
-                    2: 'baseline_temperature',   # Baseline Temperature  
-                    3: 'baseline_elevation',     # Baseline Elevation
-                    4: 'weight',                 # Weight
-                    5: 'height',                 # Height
-                    
-                    # Record developer fields (from field definitions analysis)
-                    6: 'lap_power',              # Lap Power
-                    7: 'stryd_humidity',         # Stryd Humidity (dynamic reading)
-                    8: 'stryd_temperature',      # Stryd Temperature (dynamic reading)
-                    9: 'air_power',              # Air Power
-                    10: 'form_power',            # Form Power
-                    11: 'power',                 # Power (primary power reading)
-                    12: 'power_field_unknown',   # Unknown power-related field (always 0)
-                    13: 'vertical_oscillation',  # Vertical Oscillation
-                    14: 'ground_time',           # Ground Time / Ground Contact Time
-                    15: 'leg_spring_stiffness',  # Leg Spring Stiffness
-                    16: 'impact_loading_rate'    # Impact Loading Rate
-                }
-                
-                for dev_field_id, dev_field_value in developer_fields.items():
-                    if dev_field_value is not None:
-                        # Get meaningful name or fallback to ID-based name
-                        if dev_field_id in developer_field_mapping:
-                            field_name = developer_field_mapping[dev_field_id]
-                        else:
-                            field_name = f'developer_field_{dev_field_id}'
-                        
-                        # Add as a regular field so it gets processed by field mapper
-                        field = GarminField(field_name, dev_field_value)
-                        self.fields.append(field)
-        
-        class GarminField:
-            """Wrapper for Garmin SDK field to match expected interface"""
-            def __init__(self, name, value):
-                self.name = str(name) if name is not None else ""
-                self.value = value
-        
-        return GarminSDKWrapper(messages)
-
 
     def extract_metadata(self, source: Union[str, Path, IO]) -> Dict[str, Any]:
-        """Extract fitness FIT file metadata"""
-        metadata = {}
-        
+        """Extract metadata from FIT file"""
         try:
-            fit = self._parse_fit_file(source)
-            
-            if isinstance(source, (str, Path)):
-                metadata["file_path"] = str(source)
-                metadata["file_size"] = Path(source).stat().st_size
-            
-            # Extract file information using Garmin SDK format
-            file_id_messages = list(fit.get_messages('file_id'))
-            if file_id_messages:
-                file_id = file_id_messages[0]
-                # Handle Garmin SDK message format
-                if hasattr(file_id, 'fields'):
-                    for field in file_id.fields:
-                        if field.value is not None:
-                            metadata[f"file_{field.name}"] = field.value
-            
-            # Count message types using Garmin SDK
-            message_counts = {}
-            for message in fit.get_messages():
-                msg_type = message.name
-                message_counts[msg_type] = message_counts.get(msg_type, 0) + 1
-            
-            metadata["message_counts"] = message_counts
-            metadata["extraction_time"] = datetime.now().isoformat()
-            
+            file_path = str(source) if isinstance(source, (str, Path)) else source
+            fit_data = self.fitparse_processor.process_fit_file(file_path, "metadata", "system")
+            return fit_data.get('metadata', {})
         except Exception as e:
-            logger.warning(f"Metadata extraction failed: {e}")
-            metadata["extraction_error"] = str(e)
-        
-        return metadata
-    
+            logger.warning(f"Failed to extract metadata: {e}")
+            return {}
+
     def process_session_data(self, raw_data: Any, activity_id: str, user_id: str) -> ProcessingResult:
-        """Process session data"""
-        result = ProcessingResult(status=ProcessingStatus.PROCESSING)
-        
-        try:
-            sessions = list(raw_data.get_messages('session'))
-            
-            if not sessions:
-                result.add_warning("No session data found in FIT file")
-                result.status = ProcessingStatus.COMPLETED
-                return result
-            
-            documents = []
-            for session in sessions:
-                try:
-                    doc = self._extract_session_data(session, activity_id, user_id)
-                    if doc:
-                        validated_doc = self.validator.validate_session_data(doc)
-                        validated_doc['_id'] = f"{activity_id}_session"
-                        documents.append(validated_doc)
-                        result.successful_records += 1
-                except (ValidationError, TransformationError) as e:
-                    result.add_error(f"Session validation failed: {e}")
-                    logger.warning(f"Session validation failed: {e}")
-            
-            # Bulk indexing
-            if documents:
-                try:
-                    bulk_result = self.storage.bulk_index(DataType.SESSION, documents)
-                    if hasattr(bulk_result, 'failed_count') and bulk_result.failed_count > 0:
-                        result.failed_records += bulk_result.failed_count
-                        result.errors.extend(getattr(bulk_result, 'errors', []))
-                except Exception as e:
-                    result.add_error(f"Session indexing failed: {e}")
-                    logger.error(f"Session indexing failed: {e}")
-            
-            result.status = ProcessingStatus.COMPLETED
-            result.total_records = result.successful_records + result.failed_records
-            
-        except Exception as e:
-            result.status = ProcessingStatus.FAILED
-            result.add_error(f"Session processing error: {e}")
-            logger.error(f"Session processing failed: {e}")
-        
+        """Process session data - compatibility method"""
+        # This method maintains compatibility but the actual processing is done in process()
+        result = ProcessingResult(status=ProcessingStatus.COMPLETED)
+        result.add_warning("Use process() method instead of process_session_data()")
         return result
-    
+
     def process_record_data(self, raw_data: Any, activity_id: str, user_id: str) -> ProcessingResult:
-        """Process record data"""
-        result = ProcessingResult(status=ProcessingStatus.PROCESSING)
-        
-        try:
-            records = list(raw_data.get_messages('record'))
-            
-            if not records:
-                result.add_warning("No record data found in FIT file")
-                result.status = ProcessingStatus.COMPLETED
-                return result
-            
-            documents = []
-            sequence = 0
-            
-            for record in records:
-                try:
-                    doc = self._extract_record_data(record, activity_id, user_id, sequence)
-                    if doc:
-                        validated_doc = self.validator.validate_record_data(doc)
-                        validated_doc['_id'] = f"{activity_id}_record_{sequence}"
-                        documents.append(validated_doc)
-                        result.successful_records += 1
-                        sequence += 1
-                except (ValidationError, TransformationError) as e:
-                    result.add_error(f"Record validation failed: {e}")
-                    logger.debug(f"Record validation failed: {e}")
-                    sequence += 1
-            
-            # Batch process large numbers of records
-            if documents:
-                batch_size = self.options.batch_size
-                for i in range(0, len(documents), batch_size):
-                    batch = documents[i:i + batch_size]
-                    try:
-                        bulk_result = self.storage.bulk_index(DataType.RECORD, batch)
-                        if hasattr(bulk_result, 'failed_count') and bulk_result.failed_count > 0:
-                            result.failed_records += bulk_result.failed_count
-                            result.errors.extend(getattr(bulk_result, 'errors', []))
-                    except Exception as e:
-                        result.add_error(f"Record batch indexing failed: {e}")
-                        logger.error(f"Record batch indexing failed: {e}")
-            
-            result.status = ProcessingStatus.COMPLETED
-            result.total_records = result.successful_records + result.failed_records
-            
-        except Exception as e:
-            result.status = ProcessingStatus.FAILED
-            result.add_error(f"Record processing error: {e}")
-            logger.error(f"Record processing failed: {e}")
-        
+        """Process record data - compatibility method"""
+        # This method maintains compatibility but the actual processing is done in process()
+        result = ProcessingResult(status=ProcessingStatus.COMPLETED)
+        result.add_warning("Use process() method instead of process_record_data()")
         return result
-    
+
     def process_lap_data(self, raw_data: Any, activity_id: str, user_id: str) -> ProcessingResult:
-        """Process lap data"""
-        result = ProcessingResult(status=ProcessingStatus.PROCESSING)
-        
-        try:
-            laps = list(raw_data.get_messages('lap'))
-            
-            if not laps:
-                result.add_warning("No lap data found in FIT file")
-                result.status = ProcessingStatus.COMPLETED
-                return result
-            
-            documents = []
-            lap_number = 1
-            
-            for lap in laps:
-                try:
-                    doc = self._extract_lap_data(lap, activity_id, user_id, lap_number)
-                    if doc:
-                        validated_doc = self.validator.validate_lap_data(doc)
-                        validated_doc['_id'] = f"{activity_id}_lap_{lap_number}"
-                        documents.append(validated_doc)
-                        result.successful_records += 1
-                        lap_number += 1
-                except (ValidationError, TransformationError) as e:
-                    result.add_error(f"Lap validation failed: {e}")
-                    logger.warning(f"Lap validation failed: {e}")
-                    lap_number += 1
-            
-            # Bulk indexing
-            if documents:
-                try:
-                    bulk_result = self.storage.bulk_index(DataType.LAP, documents)
-                    if hasattr(bulk_result, 'failed_count') and bulk_result.failed_count > 0:
-                        result.failed_records += bulk_result.failed_count
-                        result.errors.extend(getattr(bulk_result, 'errors', []))
-                except Exception as e:
-                    result.add_error(f"Lap indexing failed: {e}")
-                    logger.error(f"Lap indexing failed: {e}")
-            
-            result.status = ProcessingStatus.COMPLETED
-            result.total_records = result.successful_records + result.failed_records
-            
-        except Exception as e:
-            result.status = ProcessingStatus.FAILED
-            result.add_error(f"Lap processing error: {e}")
-            logger.error(f"Lap processing failed: {e}")
-        
+        """Process lap data - compatibility method"""
+        # This method maintains compatibility but the actual processing is done in process()
+        result = ProcessingResult(status=ProcessingStatus.COMPLETED)
+        result.add_warning("Use process() method instead of process_lap_data()")
         return result
-    
+
     def get_activity_summary(self, activity_id: str) -> Optional[Dict[str, Any]]:
-        """Get activity summary"""
+        """Get activity summary from storage"""
         try:
-            query_filter = QueryFilter().add_term_filter("activity_id", activity_id)
-            results = self.storage.search(DataType.SESSION, query_filter)
-            return results[0] if results else None
+            query_filter = QueryFilter()
+            query_filter.add_term_filter('activity_id', activity_id)
+            sessions = self.storage.search(DataType.SESSION, query_filter)
+            return sessions[0] if sessions else None
         except Exception as e:
-            logger.error(f"Failed to get activity summary: {e}")
+            logger.warning(f"Failed to get activity summary: {e}")
             return None
-    
+
     def get_supported_sports(self) -> List[str]:
         """Get supported sport types"""
         return [
-            "running", "cycling", "swimming", "walking", "hiking",
-            "mountaineering", "rowing", "elliptical", "tennis",
-            "basketball", "soccer", "golf", "yoga", "pilates"
+            'running', 'cycling', 'swimming', 'walking', 'hiking',
+            'triathlon', 'generic', 'fitness_equipment', 'training'
         ]
-    
-    def get_performance_analytics(self, user_id: str, days: int = 30) -> Dict[str, Any]:
-        """Get user performance analytics"""
-        try:
-            start_date = datetime.now() - timedelta(days=days)
-            query_filter = (QueryFilter()
-                           .add_term_filter("user_id", user_id)
-                           .add_date_range("timestamp", start=start_date))
-            
-            agg_query = (AggregationQuery()
-                        .add_metric("total_activities", "value_count", "activity_id")
-                        .add_metric("total_distance", "sum", "total_distance")
-                        .add_metric("total_calories", "sum", "total_calories")
-                        .add_metric("avg_speed", "avg", "enhanced_avg_speed")
-                        .add_metric("avg_heart_rate", "avg", "avg_heart_rate"))
-            
-            results = self.storage.aggregate(DataType.SESSION, query_filter, agg_query)
-            return results
-        except Exception as e:
-            logger.error(f"Failed to get performance analytics: {e}")
-            return {}
-    
-    def search_activities(self, user_id: str, filters: dict = None) -> List[Dict[str, Any]]:
-        """Search user activities"""
-        try:
-            query_filter = QueryFilter().add_term_filter("user_id", user_id)
-            
-            if filters:
-                if "sport" in filters:
-                    query_filter.add_term_filter("sport", filters["sport"])
-                if "start_date" in filters:
-                    query_filter.add_date_range("timestamp", start=filters["start_date"])
-                if "end_date" in filters:
-                    query_filter.add_date_range("timestamp", end=filters["end_date"])
-            
-            results = self.storage.search(DataType.SESSION, query_filter)
-            return results
-        except Exception as e:
-            logger.error(f"Failed to search activities: {e}")
-            return []
-    
-    def get_gps_trajectory(self, activity_id: str) -> List[Dict[str, Any]]:
-        """Get GPS trajectory for an activity"""
-        try:
-            query_filter = (QueryFilter()
-                           .add_term_filter("activity_id", activity_id)
-                           .add_sort("sequence", ascending=True)
-                           .set_pagination(10000))
-            
-            records = self.storage.search(DataType.RECORD, query_filter)
-            trajectory = []
-            
-            for record in records:
-                if 'location' in record and record['location']:
-                    trajectory.append({
-                        'timestamp': record.get('timestamp'),
-                        'lat': record['location'].get('lat'),
-                        'lon': record['location'].get('lon'),
-                        'altitude': record.get('altitude'),
-                        'speed': record.get('speed'),
-                        'heart_rate': record.get('heart_rate')
-                    })
-            
-            return trajectory
-        except Exception as e:
-            logger.error(f"Failed to get GPS trajectory: {e}")
-            return []
-
-    # Data extraction methods remain unchanged, copied from original fit.py...
-    def _extract_session_data(self, session, activity_id: str, user_id: str) -> Optional[Dict[str, Any]]:
-        """Extract data from Session message"""
-        base_doc = {
-            "activity_id": activity_id,
-            "user_id": user_id
-        }
-        
-        # Use the comprehensive field mapper to extract all valid fields
-        doc = self.field_mapper.extract_all_fields(session, base_doc)
-        
-        # Ensure we have a timestamp
-        return doc if 'timestamp' in doc else None
-    
-    def _extract_record_data(self, record, activity_id: str, user_id: str, sequence: int) -> Optional[Dict[str, Any]]:
-        """Extract data from Record message"""
-        base_doc = {
-            "activity_id": activity_id,
-            "user_id": user_id,
-            "sequence": sequence
-        }
-        
-        # Use the comprehensive field mapper to extract all valid fields
-        doc = self.field_mapper.extract_all_fields(record, base_doc)
-        
-        # Ensure we have a timestamp
-        return doc if 'timestamp' in doc else None
-    
-    def _extract_lap_data(self, lap, activity_id: str, user_id: str, lap_number: int) -> Optional[Dict[str, Any]]:
-        """Extract data from Lap message"""
-        base_doc = {
-            "activity_id": activity_id,
-            "user_id": user_id,
-            "lap_number": lap_number
-        }
-        
-        # Use the comprehensive field mapper to extract all valid fields
-        doc = self.field_mapper.extract_all_fields(lap, base_doc)
-        
-        # Ensure we have a timestamp
-        return doc if 'timestamp' in doc else None
