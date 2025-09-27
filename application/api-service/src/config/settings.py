@@ -34,7 +34,7 @@ class AppSettings(BaseSettings):
 
     # CORS
     cors_origins: str = Field(
-        default="http://localhost:3000,http://localhost:8080,http://127.0.0.1:3000,http://127.0.0.1:8080",
+        default="http://localhost:3000,http://192.168.0.240,http://localhost:8080,http://127.0.0.1:3000,http://127.0.0.1:8080,http://localhost,http://localhost:3001",
         description="CORS allowed origins (comma-separated)",
     )
 

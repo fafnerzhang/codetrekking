@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from .middleware.auth import AuthMiddleware, verify_auth
 from .middleware.logging import LoggingMiddleware
-from .config import setup_application_logging
+from .config import setup_application_logging, settings
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -103,11 +103,20 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Configure CORS
+development_origins = [
+    "http://localhost:3000", "http://localhost:3001", "http://localhost:3002",
+    "http://localhost:3003", "http://localhost:8080",
+    "http://192.168.0.200:3000", "http://192.168.0.200:3001",
+    "http://127.0.0.1:3000", "http://127.0.0.1:3001"
+]
+
+cors_origins = development_origins if os.getenv("ENVIRONMENT", "development") == "development" else os.getenv(
+    "CORS_ORIGINS", ",".join(development_origins)
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv(
-        "CORS_ORIGINS", "http://localhost:3000,http://localhost:8080"
-    ).split(","),
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -335,8 +344,8 @@ if __name__ == "__main__":
     # Development server configuration
     uvicorn.run(
         "src.main:app",
-        host="0.0.0.0",
-        port=8010,
+        host=settings.get_app_settings().api_host,
+        port=settings.get_app_settings().api_port,
         reload=True,
         log_level="info",
         access_log=True,
