@@ -5,7 +5,9 @@ Health metrics analytics endpoints.
 from datetime import datetime, timezone, date, timedelta
 from typing import Dict, List, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import PlainTextResponse
 import structlog
+from tabulate import tabulate
 
 from ...models.responses import (
     HealthMetricsResponse,
@@ -118,7 +120,7 @@ def process_hrv_data(records: List[Dict], target_date: date) -> Dict[str, Any]:
         if isinstance(timestamp, str):
             try:
                 timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            except:
+            except (ValueError, TypeError):
                 continue
         
         # Ensure timezone awareness
@@ -190,7 +192,7 @@ def process_wellness_data(records: List[Dict], target_date: date) -> Dict[str, A
         if isinstance(timestamp, str):
             try:
                 timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            except:
+            except (ValueError, TypeError):
                 continue
         
         # Ensure timezone awareness
@@ -244,7 +246,7 @@ def process_battery_data(records: List[Dict], target_date: date) -> Dict[str, An
         if isinstance(timestamp, str):
             try:
                 timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            except:
+            except (ValueError, TypeError):
                 continue
         
         # Ensure timezone awareness
@@ -296,8 +298,225 @@ def calculate_trend(values: List[float]) -> str:
         return "stable"
 
 
+@router.post("/health/summary/markdown", response_class=PlainTextResponse,
+             operation_id="get_health_metrics_markdown",
+             tags=["mcp", "health"],
+             description="Get user health metrics in markdown format optimized for LLM consumption. Returns HRV, heart rate trends and daily breakdowns in structured markdown.")
+async def get_health_metrics_markdown(
+    request: Request,
+    health_request: HealthMetricsRequest,
+    current_user: User = Depends(get_current_user),
+) -> str:
+    """Get user health metrics in markdown format optimized for LLM consumption."""
+
+    try:
+        storage = get_elasticsearch_storage()
+        user_id = str(current_user.id)
+
+        logger.info(f"Health metrics markdown request for user {user_id} from {health_request.start_date} to {health_request.end_date}")
+
+        # Get all health data for the period - copied from get_health_metrics
+        health_data = get_health_data_for_period(
+            storage, user_id, health_request.start_date, health_request.end_date
+        )
+
+        # Process data day by day
+        daily_metrics = []
+        current_date = health_request.start_date
+
+        # Collect period-wide data for trend analysis
+        period_hrv_averages = []
+        period_hr_averages = []
+
+        while current_date <= health_request.end_date:
+            # Process HRV data for this day
+            hrv_data = process_hrv_data(health_data["hrv"], current_date)
+
+            # Process wellness data for this day
+            wellness_data = process_wellness_data(health_data["wellness"], current_date)
+
+            # Calculate daily metrics
+            daily_metric = DailyHealthMetrics(
+                date=current_date,
+
+                # HRV metrics
+                hrv_rmssd_avg=sum(hrv_data["hrv_values"]) / len(hrv_data["hrv_values"]) if hrv_data["hrv_values"] else None,
+                hrv_rmssd_night_avg=sum(hrv_data["night_hrv_values"]) / len(hrv_data["night_hrv_values"]) if hrv_data["night_hrv_values"] else None,
+                hrv_rmssd_min=None,
+                hrv_rmssd_max=None,
+                hrv_data_points=len(hrv_data["hrv_values"]),
+                hrv_night_data_points=len(hrv_data["night_hrv_values"]),
+
+                # Heart rate metrics
+                resting_hr_avg=sum(wellness_data["rhr_values"]) / len(wellness_data["rhr_values"]) if wellness_data["rhr_values"] else (
+                    sum(wellness_data["hr_values"]) / len(wellness_data["hr_values"]) if wellness_data["hr_values"] else None
+                ),
+                resting_hr_night_avg=None,
+                resting_hr_min=None,
+                resting_hr_max=None,
+                hr_data_points=len(wellness_data["rhr_values"]) + len(wellness_data["hr_values"]),
+                hr_night_data_points=0,
+
+                # Battery metrics
+                battery_level_avg=None,
+                battery_level_min=None,
+                battery_level_max=None,
+                battery_data_points=0,
+
+                # Stress metrics
+                stress_score_avg=None,
+                stress_score_night_avg=None,
+            )
+
+            daily_metrics.append(daily_metric)
+
+            # Collect for period trends
+            if daily_metric.hrv_rmssd_avg is not None:
+                period_hrv_averages.append(daily_metric.hrv_rmssd_avg)
+            if daily_metric.resting_hr_avg is not None:
+                period_hr_averages.append(daily_metric.resting_hr_avg)
+
+            current_date += timedelta(days=1)
+
+        # Calculate period summary
+        total_days = (health_request.end_date - health_request.start_date).days + 1
+
+        # Calculate metrics
+        all_night_hrv = []
+        total_hrv_measurements = 0
+        total_hr_measurements = 0
+
+        for daily in daily_metrics:
+            total_hrv_measurements += daily.hrv_data_points
+            total_hr_measurements += daily.hr_data_points
+
+            if daily.hrv_rmssd_night_avg is not None:
+                all_night_hrv.extend([daily.hrv_rmssd_night_avg] * daily.hrv_night_data_points)
+
+        summary = HealthMetricsSummary(
+            start_date=health_request.start_date,
+            end_date=health_request.end_date,
+            total_days=total_days,
+
+            # HRV summary
+            avg_hrv_rmssd=sum(period_hrv_averages) / len(period_hrv_averages) if period_hrv_averages else None,
+            avg_hrv_rmssd_night=sum(all_night_hrv) / len(all_night_hrv) if all_night_hrv else None,
+            hrv_trend=calculate_trend(period_hrv_averages),
+            total_hrv_measurements=total_hrv_measurements,
+            total_hrv_night_measurements=sum(d.hrv_night_data_points for d in daily_metrics),
+
+            # Heart rate summary
+            avg_resting_hr=sum(period_hr_averages) / len(period_hr_averages) if period_hr_averages else None,
+            avg_resting_hr_night=None,
+            hr_trend=calculate_trend(period_hr_averages),
+            total_hr_measurements=total_hr_measurements,
+            total_hr_night_measurements=0,
+
+            # Battery summary
+            avg_battery_level=None,
+            battery_trend="stable",
+            total_battery_measurements=0,
+        )
+
+        # Create health response object for processing
+        health_response = HealthMetricsResponse(
+            user_id=user_id,
+            summary=summary,
+            daily_metrics=daily_metrics,
+        )
+
+        # Log user action
+        audit_logger.log_user_action(
+            request=request,
+            action="health_metrics_markdown_requested",
+            user_id=current_user.id,
+            details={
+                "date_range": f"{health_request.start_date} to {health_request.end_date}",
+                "total_days": total_days,
+                "hrv_measurements": total_hrv_measurements,
+                "hr_measurements": total_hr_measurements,
+            },
+        )
+
+        logger.info(f"Health metrics markdown generated: {total_days} days, {total_hrv_measurements} HRV, {total_hr_measurements} HR measurements")
+
+        # Convert to markdown - PRESTO TABLE FORMAT
+        markdown_content = []
+
+        # Compact header
+        markdown_content.append(f"# Health: {health_response.summary.start_date} to {health_response.summary.end_date}")
+        
+        # Inline summary metrics
+        summary = health_response.summary
+        summary_line = []
+        
+        if summary.avg_hrv_rmssd:
+            summary_line.append(f"HRV: {summary.avg_hrv_rmssd:.0f}ms")
+            if summary.avg_hrv_rmssd_night:
+                summary_line.append(f"(night: {summary.avg_hrv_rmssd_night:.0f}ms)")
+        
+        if summary.avg_resting_hr:
+            summary_line.append(f"RHR: {summary.avg_resting_hr:.0f}bpm")
+        
+        if summary_line:
+            markdown_content.append(" | ".join(summary_line))
+        
+        # Presto table for daily data
+        significant_data = [d for d in health_response.daily_metrics 
+                          if d.hrv_rmssd_avg or d.resting_hr_avg]
+        
+        if significant_data and len(significant_data) <= 30:
+            markdown_content.append("")
+            
+            # Prepare data for tabulate with compact headers
+            table_data = []
+            for daily in significant_data:
+                date_str = daily.date.strftime("%m/%d")
+                hrv = f"{daily.hrv_rmssd_avg:.0f}" if daily.hrv_rmssd_avg else "-"
+                rhr = f"{daily.resting_hr_avg:.0f}" if daily.resting_hr_avg else "-"
+                table_data.append([date_str, hrv, rhr])
+            
+            # Use presto format - very compact, no borders
+            table = tabulate(
+                table_data,
+                headers=["Date", "HRV", "RHR"],
+                tablefmt="presto"
+            )
+            markdown_content.append(table)
+        
+        # Compact insights with trends
+        insights = []
+        if summary.avg_hrv_rmssd and summary.hrv_trend != "stable":
+            trend = "↑" if summary.hrv_trend == "improving" else "↓"
+            insights.append(f"HRV {trend}")
+        
+        if summary.avg_resting_hr and summary.hr_trend != "stable":
+            trend = "↓" if summary.hr_trend == "declining" else "↑" 
+            insights.append(f"RHR {trend}")
+        
+        if insights:
+            markdown_content.append("")
+            markdown_content.append("**Trends:** " + " | ".join(insights))
+
+        return "\n".join(markdown_content)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Health metrics markdown error",
+            user_id=getattr(current_user, 'id', 'unknown'),
+            error=str(e)
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate health metrics markdown",
+        )
+
+
 @router.post("/health/summary", response_model=HealthMetricsResponse,
-             operation_id="get_health_metrics",
+             operation_id="get_health_metrics_json",
+             tags=["mcp"],
              description="Get user health metrics (HRV, heart rate, battery status) for a date range with night averages.")
 async def get_health_metrics(
     request: Request,

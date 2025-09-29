@@ -5,7 +5,9 @@ Activity summary analytics endpoints.
 from datetime import datetime
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import PlainTextResponse
 import structlog
+from tabulate import tabulate
 
 from ...models.responses import WeeklyActivitySummary, ZoneDistribution
 from ...models.requests import WeeklyActivitySummaryRequest
@@ -34,8 +36,139 @@ logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-@router.post("/activity/summary", response_model=WeeklyActivitySummary, 
+@router.post("/activity/summary/markdown", response_class=PlainTextResponse,
+            operation_id="get_activity_summary_markdown",
+            tags=["mcp", "activity"],
+            description="Get user activity summary in markdown format optimized for LLM consumption. Returns distance, time, TSS, and zone distributions in structured markdown.")
+async def get_activity_summary_markdown(
+    request: Request,
+    summary_request: WeeklyActivitySummaryRequest,
+    current_user: User = Depends(get_current_user),
+) -> str:
+    """Get user activity summary in markdown format optimized for LLM consumption."""
+
+    # Get the structured data first
+    activity_response = await get_summary(request, summary_request, current_user)
+
+    # Convert to markdown
+    markdown_content = []
+
+    # Header
+    markdown_content.append(f"# Activity Summary Report")
+    markdown_content.append(f"**Period:** {activity_response.date_range['start']} to {activity_response.date_range['end']}")
+    markdown_content.append("")
+
+    # Summary metrics
+    markdown_content.append("## Summary Metrics")
+    markdown_content.append(f"- **Total Distance:** {activity_response.total_distance} km")
+    markdown_content.append(f"- **Total Time:** {activity_response.total_time}")
+    markdown_content.append(f"- **Total TSS:** {activity_response.total_tss}")
+    markdown_content.append(f"- **Activity Count:** {activity_response.activity_count}")
+    markdown_content.append("")
+
+    # Zone methods
+    markdown_content.append("## Zone Analysis Methods")
+    markdown_content.append(f"- **Power Zones:** {activity_response.zone_methods['power']}")
+    markdown_content.append(f"- **Pace Zones:** {activity_response.zone_methods['pace']}")
+    markdown_content.append(f"- **Heart Rate Zones:** {activity_response.zone_methods['heart_rate']}")
+    markdown_content.append("")
+
+    # Power zone distribution using tabulate
+    if activity_response.power_zones and activity_response.power_zones.zones:
+        markdown_content.append("## Power Zone Distribution")
+        power_data = []
+        for zone in activity_response.power_zones.zones:
+            # Convert seconds to MM:SS format
+            time_str = f"{zone.seconds // 60}:{zone.seconds % 60:02d}" if zone.seconds else "0:00"
+            pct_str = f"{zone.percentage:.1f}%" if zone.percentage else "0.0%"
+            power_data.append([
+                zone.zone_number,
+                zone.description,
+                time_str,
+                pct_str
+            ])
+
+        if power_data:
+            power_table = tabulate(
+                power_data,
+                headers=["Zone", "Description", "Time", "Percentage"],
+                tablefmt="github"
+            )
+            markdown_content.append(power_table)
+        markdown_content.append("")
+
+    # Pace zone distribution using tabulate
+    if activity_response.pace_zones and activity_response.pace_zones.zones:
+        markdown_content.append("## Pace Zone Distribution")
+        pace_data = []
+        for zone in activity_response.pace_zones.zones:
+            # Convert seconds to MM:SS format
+            time_str = f"{zone.seconds // 60}:{zone.seconds % 60:02d}" if zone.seconds else "0:00"
+            pct_str = f"{zone.percentage:.1f}%" if zone.percentage else "0.0%"
+            pace_data.append([
+                zone.zone_number,
+                zone.description,
+                time_str,
+                pct_str
+            ])
+
+        if pace_data:
+            pace_table = tabulate(
+                pace_data,
+                headers=["Zone", "Description", "Time", "Percentage"],
+                tablefmt="github"
+            )
+            markdown_content.append(pace_table)
+        markdown_content.append("")
+
+    # Heart rate zone distribution using tabulate
+    if activity_response.heart_rate_zones and activity_response.heart_rate_zones.zones:
+        markdown_content.append("## Heart Rate Zone Distribution")
+        hr_data = []
+        for zone in activity_response.heart_rate_zones.zones:
+            # Convert seconds to MM:SS format
+            time_str = f"{zone.seconds // 60}:{zone.seconds % 60:02d}" if zone.seconds else "0:00"
+            pct_str = f"{zone.percentage:.1f}%" if zone.percentage else "0.0%"
+            hr_data.append([
+                zone.zone_number,
+                zone.description,
+                time_str,
+                pct_str
+            ])
+
+        if hr_data:
+            hr_table = tabulate(
+                hr_data,
+                headers=["Zone", "Description", "Time", "Percentage"],
+                tablefmt="presto"
+            )
+            markdown_content.append(hr_table)
+        markdown_content.append("")
+
+    # Key insights
+    markdown_content.append("## Key Insights")
+
+    if activity_response.total_distance > 0:
+        avg_distance = activity_response.total_distance / activity_response.activity_count if activity_response.activity_count > 0 else 0
+        markdown_content.append(f"- Average distance per activity: {avg_distance:.1f} km")
+
+    if activity_response.total_tss > 0:
+        avg_tss = activity_response.total_tss / activity_response.activity_count if activity_response.activity_count > 0 else 0
+        markdown_content.append(f"- Average TSS per activity: {avg_tss:.1f}")
+
+    # Zone distribution insights
+    if activity_response.power_zones and activity_response.power_zones.zones:
+        high_intensity_zones = [z for z in activity_response.power_zones.zones if z.zone_number >= 4 and z.percentage and z.percentage > 0]
+        if high_intensity_zones:
+            total_high_intensity = sum(z.percentage for z in high_intensity_zones)
+            markdown_content.append(f"- High intensity power training (Zone 4+): {total_high_intensity:.1f}%")
+
+    return "\n".join(markdown_content)
+
+
+@router.post("/activity/summary", response_model=WeeklyActivitySummary,
             operation_id="get_activity_summary",
+            tags=["mcp"],
             description="Get user activity summary for custom date range with multi-zone analysis.")
 async def get_summary(
     request: Request,

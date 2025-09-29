@@ -19,11 +19,12 @@ Formulas:
 Where IF (Intensity Factor) represents the ratio of effort to threshold
 """
 
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Literal
 from datetime import datetime, timedelta
 import numpy as np
 from statistics import mean
 from math import sqrt
+from pydantic import BaseModel, Field, field_validator
 
 from ..storage.interface import (
     StorageInterface, DataType, QueryFilter, AggregationQuery
@@ -36,6 +37,58 @@ from ..utils import get_logger
 
 
 logger = get_logger(__name__)
+
+
+class WorkoutPlanSegment(BaseModel):
+    """
+    Represents a segment of a workout plan with specific intensity and duration.
+
+    This is the core data structure for workout plan TSS estimation.
+    Simple, no special cases - just intensity and time.
+    """
+    duration_minutes: float = Field(..., gt=0, description="Duration in minutes (must be positive)")
+    intensity_metric: Literal['power', 'heart_rate', 'pace'] = Field(..., description="Type of intensity metric")
+    target_value: float = Field(..., gt=0, description="Target intensity value (watts, bpm, or min/km)")
+
+    @field_validator('target_value')
+    @classmethod
+    def validate_target_value(cls, v, info):
+        """Validate target value based on intensity metric"""
+        if info.data:
+            intensity_metric = info.data.get('intensity_metric')
+
+            if intensity_metric == 'power' and v > 2000:
+                raise ValueError("Power target seems unreasonably high (>2000W)")
+            elif intensity_metric == 'heart_rate' and (v < 30 or v > 250):
+                raise ValueError("Heart rate target should be between 30-250 bpm")
+            elif intensity_metric == 'pace' and (v < 1.0 or v > 20.0):
+                raise ValueError("Pace target should be between 1:00-20:00 min/km")
+
+        return v
+
+    def duration_hours(self) -> float:
+        """Convert duration to hours for TSS calculations"""
+        return self.duration_minutes / 60.0
+
+
+class WorkoutPlan(BaseModel):
+    """
+    Represents a complete workout plan as a collection of segments.
+
+    Linus principle: Eliminate special cases by treating everything as segments.
+    No warm-up, cool-down, or interval special handling - just segments.
+    """
+    segments: List[WorkoutPlanSegment] = Field(..., min_length=1, description="Workout segments")
+    name: Optional[str] = Field(None, description="Optional workout name")
+    description: Optional[str] = Field(None, description="Optional workout description")
+
+    def total_duration_minutes(self) -> float:
+        """Calculate total workout duration"""
+        return sum(segment.duration_minutes for segment in self.segments)
+
+    def total_duration_hours(self) -> float:
+        """Calculate total workout duration in hours"""
+        return self.total_duration_minutes() / 60.0
 
 
 class TSSCalculator:
@@ -125,15 +178,16 @@ class TSSCalculator:
         except (ValueError, IndexError):
             raise ValueError(f"Invalid pace format: {pace_str}. Expected MM:SS or decimal minutes.")
     
-    def calculate_power_tss(self, activity_id: str = None, ftp: Optional[float] = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def calculate_power_tss(self, activity_id: str = None, ftp: Optional[float] = None, threshold_power: Optional[float] = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Calculate Power-based Training Stress Score
-        
+
         Args:
             activity_id: Activity identifier (used if raw_data is None)
-            ftp: Functional Threshold Power (watts). If None, will attempt to estimate from data
+            ftp: Functional Threshold Power for cycling (watts). If None, will attempt to estimate from data
+            threshold_power: Threshold Power for running (watts). Takes precedence over ftp if provided
             raw_data: Optional list of record dictionaries containing power data
-            
+
         Returns:
             Dictionary containing TSS calculation results
         """
@@ -144,11 +198,12 @@ class TSSCalculator:
             if not power_data:
                 raise InsufficientDataError("No power data available for TSS calculation")
             
-            # Use provided FTP or estimate from thresholds
-            if ftp is None:
-                ftp = self._estimate_ftp(activity_id or "raw_data")
-                if ftp is None:
-                    raise CalculationError("FTP not provided and cannot be estimated")
+            # Use provided Threshold Power (running) or FTP (cycling) or estimate from thresholds
+            final_threshold_power = threshold_power or ftp
+            if final_threshold_power is None:
+                final_threshold_power = self._estimate_ftp(activity_id or "raw_data")
+                if final_threshold_power is None:
+                    raise CalculationError("Threshold power/FTP not provided and cannot be estimated")
             
             # Calculate Normalized Power (NP)
             normalized_power = self._calculate_normalized_power(power_data)
@@ -157,16 +212,17 @@ class TSSCalculator:
             duration_seconds = len(power_data)
             
             # Calculate Intensity Factor (IF)
-            intensity_factor = normalized_power / ftp if ftp > 0 else 0
-            
+            intensity_factor = normalized_power / final_threshold_power if final_threshold_power > 0 else 0
+
             # Calculate TSS
-            tss = (duration_seconds * normalized_power * intensity_factor) / (ftp * 3600) * 100
-            
+            tss = (duration_seconds * normalized_power * intensity_factor) / (final_threshold_power * 3600) * 100
+
             return {
                 "tss": round(tss, 1),
                 "normalized_power": round(normalized_power, 1),
                 "intensity_factor": round(intensity_factor, 3),
-                "ftp": ftp,
+                "ftp": ftp,  # Keep for backward compatibility
+                "threshold_power": final_threshold_power,  # The actual value used
                 "duration_seconds": duration_seconds,
                 "duration_hours": round(duration_seconds / 3600, 2),
                 "avg_power": round(mean(power_data), 1),
@@ -325,16 +381,284 @@ class TSSCalculator:
     def calculate_pace_tss(self, activity_id: str = None, threshold_pace: Optional[float] = None, raw_data: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Backward compatibility method for calculate_running_pace_tss
-        
+
         Args:
             activity_id: Activity identifier (used if raw_data is None)
             threshold_pace: Functional threshold pace in minutes per kilometer
             raw_data: Optional list of record dictionaries containing speed data
-            
+
         Returns:
             Dictionary containing running pace TSS calculation results
         """
         return self.calculate_running_pace_tss(activity_id, threshold_pace, raw_data)
+
+    def estimate_workout_plan_tss(self, workout_plan: WorkoutPlan,
+                                 ftp: Optional[float] = None,
+                                 threshold_power: Optional[float] = None,
+                                 threshold_hr: Optional[int] = None,
+                                 max_hr: Optional[int] = None,
+                                 threshold_pace: Optional[float] = None,
+                                 user_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Estimate TSS for a planned workout before execution.
+
+        Linus principle: Dumbest possible implementation - just simulate the data
+        and use existing TSS calculation logic. No special cases.
+
+        Args:
+            workout_plan: WorkoutPlan containing segments with target intensities
+            ftp: Functional Threshold Power (watts)
+            threshold_hr: Lactate threshold heart rate
+            max_hr: Maximum heart rate
+            threshold_pace: Functional threshold pace (min/km)
+            user_id: User identifier (used to retrieve stored thresholds)
+
+        Returns:
+            Dictionary containing estimated TSS and segment breakdown
+        """
+        if not workout_plan.segments:
+            raise InsufficientDataError("Workout plan must contain at least one segment")
+
+        try:
+            # Get user thresholds if user_id is provided (same as composite TSS)
+            user_thresholds = {}
+            if user_id:
+                user_thresholds = self._get_user_thresholds(user_id)
+                logger.debug(f"Retrieved user thresholds for {user_id}: {list(user_thresholds.keys())}")
+
+            # Merge user thresholds with provided parameters (parameters take precedence)
+            ftp = ftp or user_thresholds.get('ftp')
+            threshold_power = threshold_power or user_thresholds.get('threshold_power')
+            threshold_hr = threshold_hr or user_thresholds.get('threshold_hr')
+            max_hr = max_hr or user_thresholds.get('max_hr')
+            threshold_pace = threshold_pace or user_thresholds.get('threshold_pace')
+
+            # Group segments by intensity metric type
+            power_segments = [s for s in workout_plan.segments if s.intensity_metric == 'power']
+            hr_segments = [s for s in workout_plan.segments if s.intensity_metric == 'heart_rate']
+            pace_segments = [s for s in workout_plan.segments if s.intensity_metric == 'pace']
+
+            segment_estimates = []
+            total_estimated_tss = 0.0
+
+            # Calculate TSS for each segment type using existing logic
+            # Also capture estimated thresholds from the internal calculations
+            if power_segments:
+                # Use threshold_power if provided, otherwise ftp, otherwise estimate
+                final_threshold_power = threshold_power or ftp
+                if final_threshold_power is None:
+                    final_threshold_power = self._estimate_ftp("workout_plan")
+                power_tss_data = self._estimate_power_segments_tss(power_segments, final_threshold_power)
+                # Update the variables for return values - use threshold_power terminology
+                threshold_power = final_threshold_power
+                if not ftp:  # Only set ftp for backward compatibility if not already set
+                    ftp = final_threshold_power
+                segment_estimates.extend(power_tss_data['segments'])
+                total_estimated_tss += power_tss_data['total_tss']
+
+            if hr_segments:
+                if threshold_hr is None:
+                    threshold_hr = self._estimate_threshold_hr()
+                if max_hr is None:
+                    max_hr = self._estimate_max_hr([])
+                hr_tss_data = self._estimate_hr_segments_tss(hr_segments, threshold_hr, max_hr)
+                segment_estimates.extend(hr_tss_data['segments'])
+                total_estimated_tss += hr_tss_data['total_tss']
+
+            if pace_segments:
+                if threshold_pace is None:
+                    threshold_pace = self._estimate_threshold_pace("workout_plan")
+                pace_tss_data = self._estimate_pace_segments_tss(pace_segments, threshold_pace)
+                segment_estimates.extend(pace_tss_data['segments'])
+                total_estimated_tss += pace_tss_data['total_tss']
+
+            if not segment_estimates:
+                raise InsufficientDataError("No valid segments found in workout plan")
+
+            # Determine primary method based on segment count
+            primary_method = self._determine_primary_method(power_segments, hr_segments, pace_segments)
+
+            return {
+                'estimated_tss': round(total_estimated_tss, 1),
+                'total_duration_minutes': workout_plan.total_duration_minutes(),
+                'total_duration_hours': workout_plan.total_duration_hours(),
+                'segment_count': len(workout_plan.segments),
+                'primary_method': primary_method,
+                'segments': segment_estimates,
+                'thresholds_used': {
+                    'ftp': ftp,
+                    'threshold_power': threshold_power,  # The actual power value used
+                    'threshold_hr': threshold_hr,
+                    'max_hr': max_hr,
+                    'threshold_pace': threshold_pace,
+                    'source': 'user_indicators' if user_thresholds else 'parameters'
+                },
+                'calculation_method': 'workout_plan_estimation',
+                'estimated_at': datetime.now()
+            }
+
+        except Exception as e:
+            logger.error(f"Error estimating workout plan TSS: {str(e)}")
+            raise CalculationError(f"Workout plan TSS estimation failed: {str(e)}")
+
+    def _estimate_power_segments_tss(self, segments: List[WorkoutPlanSegment], ftp: Optional[float]) -> Dict[str, Any]:
+        """
+        Estimate TSS for power-based segments.
+
+        Linus approach: Generate fake data matching the target intensity,
+        then use existing calculation logic. Simple and reuses existing code.
+        """
+        if ftp is None:
+            ftp = self._estimate_ftp("workout_plan")
+            if ftp is None:
+                raise CalculationError("FTP required for power-based segments")
+
+        total_tss = 0.0
+        segment_results = []
+
+        for segment in segments:
+            # Generate simulated power data at target intensity
+            duration_seconds = int(segment.duration_minutes * 60)
+            simulated_power_data = [segment.target_value] * duration_seconds
+
+            # Calculate segment TSS using existing logic
+            try:
+                segment_tss_result = self.calculate_power_tss(
+                    raw_data=[{'power': p} for p in simulated_power_data],
+                    ftp=ftp
+                )
+
+                segment_info = {
+                    'duration_minutes': segment.duration_minutes,
+                    'intensity_metric': 'power',
+                    'target_value': segment.target_value,
+                    'estimated_tss': segment_tss_result['tss'],
+                    'intensity_factor': segment_tss_result['intensity_factor'],
+                    'normalized_power': segment_tss_result['normalized_power']
+                }
+
+                segment_results.append(segment_info)
+                total_tss += segment_tss_result['tss']
+
+            except Exception as e:
+                logger.warning(f"Failed to calculate TSS for power segment: {str(e)}")
+                continue
+
+        return {
+            'total_tss': total_tss,
+            'segments': segment_results
+        }
+
+    def _estimate_hr_segments_tss(self, segments: List[WorkoutPlanSegment],
+                                 threshold_hr: Optional[int], max_hr: Optional[int]) -> Dict[str, Any]:
+        """Estimate TSS for heart rate-based segments"""
+        if threshold_hr is None:
+            threshold_hr = self._estimate_threshold_hr()
+            if threshold_hr is None:
+                raise CalculationError("Threshold HR required for heart rate-based segments")
+
+        if max_hr is None:
+            max_hr = self._estimate_max_hr([])  # Use default estimation
+
+        total_tss = 0.0
+        segment_results = []
+
+        for segment in segments:
+            # Generate simulated HR data at target intensity
+            duration_seconds = int(segment.duration_minutes * 60)
+            simulated_hr_data = [int(segment.target_value)] * duration_seconds
+
+            # Calculate segment TSS using existing logic
+            try:
+                segment_tss_result = self.calculate_hr_tss(
+                    raw_data=[{'heart_rate': hr} for hr in simulated_hr_data],
+                    threshold_hr=threshold_hr,
+                    max_hr=max_hr
+                )
+
+                segment_info = {
+                    'duration_minutes': segment.duration_minutes,
+                    'intensity_metric': 'heart_rate',
+                    'target_value': segment.target_value,
+                    'estimated_tss': segment_tss_result['tss'],
+                    'intensity_factor': segment_tss_result['intensity_factor'],
+                    'avg_hr': segment_tss_result['avg_hr']
+                }
+
+                segment_results.append(segment_info)
+                total_tss += segment_tss_result['tss']
+
+            except Exception as e:
+                logger.warning(f"Failed to calculate TSS for HR segment: {str(e)}")
+                continue
+
+        return {
+            'total_tss': total_tss,
+            'segments': segment_results
+        }
+
+    def _estimate_pace_segments_tss(self, segments: List[WorkoutPlanSegment],
+                                   threshold_pace: Optional[float]) -> Dict[str, Any]:
+        """Estimate TSS for pace-based segments"""
+        if threshold_pace is None:
+            threshold_pace = self._estimate_threshold_pace("workout_plan")
+            if threshold_pace is None:
+                raise CalculationError("Threshold pace required for pace-based segments")
+
+        total_tss = 0.0
+        segment_results = []
+
+        for segment in segments:
+            # Generate simulated speed data from target pace
+            duration_seconds = int(segment.duration_minutes * 60)
+            target_speed = self.pace_per_km_to_speed(segment.target_value)
+            simulated_speed_data = [target_speed] * duration_seconds
+
+            # Calculate segment TSS using existing logic
+            try:
+                segment_tss_result = self.calculate_running_pace_tss(
+                    raw_data=[{'speed': speed} for speed in simulated_speed_data],
+                    threshold_pace=threshold_pace
+                )
+
+                segment_info = {
+                    'duration_minutes': segment.duration_minutes,
+                    'intensity_metric': 'pace',
+                    'target_value': segment.target_value,
+                    'target_pace_formatted': self.format_pace(segment.target_value),
+                    'estimated_tss': segment_tss_result['tss'],
+                    'intensity_factor': segment_tss_result['intensity_factor'],
+                    'normalized_pace': segment_tss_result['normalized_pace']
+                }
+
+                segment_results.append(segment_info)
+                total_tss += segment_tss_result['tss']
+
+            except Exception as e:
+                logger.warning(f"Failed to calculate TSS for pace segment: {str(e)}")
+                continue
+
+        return {
+            'total_tss': total_tss,
+            'segments': segment_results
+        }
+
+    def _determine_primary_method(self, power_segments: List[WorkoutPlanSegment],
+                                 hr_segments: List[WorkoutPlanSegment],
+                                 pace_segments: List[WorkoutPlanSegment]) -> str:
+        """
+        Determine primary calculation method based on segment types.
+
+        Follows the same priority as existing composite TSS: Power > HR > Pace
+        """
+        if power_segments:
+            return 'power'
+        elif hr_segments:
+            return 'heart_rate'
+        elif pace_segments:
+            return 'pace'
+        else:
+            return 'unknown'
     
     def calculate_composite_tss(self, activity_id: str = None, raw_data: Optional[List[Dict[str, Any]]] = None, user_id: str = None, **kwargs) -> Dict[str, Any]:
         """
@@ -361,6 +685,7 @@ class TSSCalculator:
         
         # Merge user thresholds with provided kwargs (kwargs take precedence)
         ftp = kwargs.get('ftp') or user_thresholds.get('ftp')
+        threshold_power = kwargs.get('threshold_power') or user_thresholds.get('threshold_power')
         threshold_hr = kwargs.get('threshold_hr') or user_thresholds.get('threshold_hr')
         max_hr = kwargs.get('max_hr') or user_thresholds.get('max_hr')
         threshold_pace = kwargs.get('threshold_pace') or user_thresholds.get('threshold_pace')
@@ -368,8 +693,9 @@ class TSSCalculator:
         # Try power-based TSS first
         try:
             power_tss = self.calculate_power_tss(
-                activity_id, 
+                activity_id,
                 ftp=ftp,
+                threshold_power=threshold_power,
                 raw_data=raw_data
             )
             results['power_tss'] = power_tss
@@ -441,7 +767,8 @@ class TSSCalculator:
                     'threshold_hr': user_indicators.get('threshold_heart_rate'),
                     'max_hr': user_indicators.get('max_heart_rate'),
                     'resting_hr': user_indicators.get('resting_heart_rate'),
-                    'ftp': user_indicators.get('threshold_power'),
+                    'ftp': user_indicators.get('threshold_power'),  # For backward compatibility
+                    'threshold_power': user_indicators.get('threshold_power'),  # Running power terminology
                     'threshold_pace': user_indicators.get('threshold_pace'),
                     'weight': user_indicators.get('weight'),
                     'age': user_indicators.get('age'),

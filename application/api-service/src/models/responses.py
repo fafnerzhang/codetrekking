@@ -496,8 +496,7 @@ class UserIndicatorsResponse(BaseModel):
     max_power: Optional[int] = Field(None, description="Maximum power in watts")
     max_pace: Optional[float] = Field(None, description="Maximum pace in minutes per km")
 
-    # Critical thresholds
-    critical_power: Optional[int] = Field(None, description="Critical power in watts")
+    # Critical thresholds (legacy - use threshold_power instead)
     critical_speed: Optional[float] = Field(None, description="Critical speed in m/s")
 
     # VO2 and fitness metrics
@@ -608,3 +607,31 @@ class HealthMetricsResponse(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.utcnow, description="When this report was generated")
     timezone: str = Field(default="Asia/Taipei", description="Timezone used for night period calculations")
     night_hours: str = Field(default="23:00-06:00", description="Hours considered as night period")
+
+
+# Workout TSS Response Models
+
+
+class WorkoutSegmentTSS(BaseModel):
+    """TSS estimate for a single workout segment."""
+
+    duration_minutes: float = Field(..., description="Segment duration in minutes")
+    intensity_metric: str = Field(..., description="Type of intensity metric (power, heart_rate, pace)")
+    target_value: float = Field(..., description="Target intensity value")
+    target_formatted: str = Field(..., description="Human-readable target (e.g., '4:30' for pace)")
+    estimated_tss: float = Field(..., description="Estimated TSS for this segment")
+    intensity_factor: float = Field(..., description="Intensity factor relative to threshold")
+
+
+class WorkoutTSSEstimate(BaseModel):
+    """Complete workout TSS estimation response."""
+
+    estimated_tss: float = Field(..., description="Total estimated TSS for the workout")
+    total_duration_minutes: float = Field(..., description="Total workout duration in minutes")
+    total_duration_hours: float = Field(..., description="Total workout duration in hours")
+    segment_count: int = Field(..., description="Number of workout segments")
+    primary_method: str = Field(..., description="Primary TSS calculation method (power/heart_rate/pace)")
+    segments: List[WorkoutSegmentTSS] = Field(..., description="TSS breakdown by segment")
+    thresholds_used: Dict[str, Any] = Field(..., description="Threshold values used in calculation")
+    calculation_method: str = Field(..., description="Calculation method identifier")
+    estimated_at: datetime = Field(..., description="When the estimate was calculated")

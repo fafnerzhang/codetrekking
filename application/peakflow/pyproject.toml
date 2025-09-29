@@ -42,6 +42,8 @@ dependencies = [
     "garmin-fit-sdk>=21.178.0",
     "matplotlib>=3.10.6",
     "httpx>=0.28.1",
+    "aiohttp>=3.12.15",
+    "sseclient>=0.0.27",
 ]
 
 [project.optional-dependencies]

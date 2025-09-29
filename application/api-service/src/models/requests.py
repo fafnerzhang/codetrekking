@@ -288,7 +288,7 @@ class PowerZoneMethod(str, Enum):
 
     STEVE_PALLADINO = "steve_palladino"
     STRYD_RUNNING = "stryd_running"
-    CRITICAL_POWER = "critical_power"
+    THRESHOLD_POWER = "threshold_power"
 
 
 class PaceZoneMethod(str, Enum):
@@ -339,8 +339,7 @@ class UserIndicatorsUpdateRequest(BaseModel):
     max_power: Optional[int] = Field(None, ge=100, le=3000, description="Maximum power in watts")
     max_pace: Optional[float] = Field(None, ge=2.0, le=10.0, description="Maximum pace in minutes per km")
 
-    # Critical thresholds
-    critical_power: Optional[int] = Field(None, ge=50, le=2000, description="Critical power in watts")
+    # Critical thresholds (legacy - use threshold_power instead)
     critical_speed: Optional[float] = Field(None, ge=1.0, le=30.0, description="Critical speed in m/s")
 
     # VO2 and fitness metrics

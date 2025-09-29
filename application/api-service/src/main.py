@@ -329,14 +329,25 @@ mcp = FastApiMCP(
     name="CodeTrekking MCP Server",
     description="MCP server for CodeTrekking fitness data pipeline API endpoints",
     include_tags=[
-        "analytics"
+        "mcp", "analytics"
     ],
     describe_all_responses=True,
     describe_full_response_schema=True
 )
 
 mcp.mount_http()
-
+workout_mcp = FastApiMCP(
+    app,
+    auth_config=AuthConfig(dependencies=[Depends(verify_auth)]),
+    name="CodeTrekking MCP Server",
+    description="MCP server for CodeTrekking fitness data pipeline API endpoints",
+    include_tags=[
+        "tss"
+    ],
+    describe_all_responses=True,
+    describe_full_response_schema=True
+)
+workout_mcp.mount_http(mount_path="/workout-mcp")
 
 if __name__ == "__main__":
     import uvicorn

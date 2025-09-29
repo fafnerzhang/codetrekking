@@ -47,8 +47,6 @@ def get_user_thresholds(storage: ElasticsearchStorage, user_id: str) -> Dict[str
             # Power thresholds
             if indicator.get("threshold_power"):
                 thresholds["threshold_power"] = indicator.get("threshold_power")
-            elif indicator.get("critical_power"):
-                thresholds["threshold_power"] = indicator.get("critical_power")
 
             # Pace threshold (typically in min/km)
             if indicator.get("threshold_pace"):
@@ -73,7 +71,7 @@ def get_zone_method_mapping() -> Dict[str, Dict]:
         "power": {
             PowerZoneMethod.STEVE_PALLADINO: PFPowerZoneMethod.STEVE_PALLADINO,
             PowerZoneMethod.STRYD_RUNNING: PFPowerZoneMethod.STRYD_RUNNING,
-            PowerZoneMethod.CRITICAL_POWER: PFPowerZoneMethod.CRITICAL_POWER,
+            PowerZoneMethod.THRESHOLD_POWER: PFPowerZoneMethod.CRITICAL_POWER,
         },
         "pace": {
             PaceZoneMethod.JOE_FRIEL_RUNNING: PFPaceZoneMethod.JOE_FRIEL,
