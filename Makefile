@@ -64,3 +64,25 @@ logs-beat:    ## Show Celery beat scheduler logs
 remove-peakflow-tasks:    ## Remove PeakFlow Tasks stack
 	@echo "🗑️  Removing PeakFlow Tasks stack..."
 	docker stack rm peakflow-tasks
+
+# === Mastra AI Server Management ===
+
+mastra-status:    ## Check Mastra server status and health
+	@echo "🔍 Checking Mastra server status..."
+	./scripts/monitor-mastra.sh status
+
+mastra-restart:    ## Restart Mastra server cleanly
+	@echo "🔄 Restarting Mastra server..."
+	./scripts/monitor-mastra.sh restart
+
+mastra-kill:    ## Kill all Mastra processes
+	@echo "🔴 Killing Mastra processes..."
+	./scripts/monitor-mastra.sh kill
+
+mastra-logs:    ## Show Mastra server logs
+	@echo "📄 Showing Mastra server logs..."
+	./scripts/monitor-mastra.sh logs
+
+mastra-dev:    ## Start Mastra development server
+	@echo "🚀 Starting Mastra development server..."
+	cd application/peakview/mastra && npm run dev
