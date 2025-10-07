@@ -2,10 +2,11 @@ import { Mastra } from '@mastra/core/mastra';
 import { PostgresStore } from '@mastra/pg';
 import { workoutExpert } from './agents/workout-expert';
 import { phasePlanner } from './agents/phase-planner';
+import { workoutEnhancer } from './agents/workout-enhancer';
 import { Memory } from '@mastra/memory';
 import { Agent } from '@mastra/core/agent';
 import { currentModel } from "./model";
-import { generateDetailedWorkoutsWorkflow, weeklyPlanWorkflow } from './workflows/weeklyPlanWorkflow';
+import { generateDetailedWorkoutsWorkflow, weeklyPlanWorkflow } from './workflows/generateDetailedWorkoutsWorkflow';
 import { runningPhaseWorkflow } from './workflows/runningPhaseWorkflow';
 import { PinoLogger } from '@mastra/loggers';
 const connectionString = `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`;
@@ -84,7 +85,7 @@ Use this section to track which weeks have detailed workouts generated:
       runningPhaseWorkflow,
       generateDetailedWorkoutsWorkflow
     },
-    instructions: ({ runtimeContext }) => {
+    instructions: () => {
       return `
 You are an expert running coach with access to fitness data and conversation history.
 
@@ -125,8 +126,7 @@ Execute **runningPhaseWorkflow** with complete athlete data. It returns:
 After runningPhaseWorkflow completes:
 
 1. **Extract critical workouts from weeks 1-4** of the returned phases
-2. **Combine ALL workouts into ONE array** (e.g., 12 workouts if 3 critical workouts/week × 4 weeks)
-3. **Execute generateDetailedWorkoutsWorkflow ONCE** with the complete workouts array
+2. **Execute generateDetailedWorkoutsWorkflow FOR EACH WEEK** sequentially, NEVER in parallel:
 
 The workflow returns fully detailed workout prescriptions with:
 - Specific segments (warmup, intervals, cooldown)
@@ -137,13 +137,12 @@ The workflow returns fully detailed workout prescriptions with:
 **CRITICAL Workflow Usage Rules**:
 - Execute generateDetailedWorkoutsWorkflow sequentially AFTER runningPhaseWorkflow
 - ONLY process weeks 1-4 initially to maintain a rolling buffer
-- ALWAYS keep 4 weeks of detailed workouts ready
 - NEVER run workflows in parallel or out of order
 - NEVER generate more than 7 workouts in a single call
 
 ### After Both Workflows Complete:
 - Update memory: "Active Training Plan: Yes", "Completed Weeks: week-1, week-2, week-3, week-4"
-- Present complete plan to athlete with coaching context
+- **Summarize plan to athlete with context**
 
 ## Communication Rules
 
@@ -178,7 +177,8 @@ export const mastra = new Mastra({
   agents: {
     runningCoach,
     workoutExpert,
-    phasePlanner
+    phasePlanner,
+    workoutEnhancer
   },
   workflows: {
     runningPhaseWorkflow,

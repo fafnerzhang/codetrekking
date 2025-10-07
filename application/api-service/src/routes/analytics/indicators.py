@@ -117,7 +117,6 @@ async def update_user_indicators(
 
 @router.get("/user/indicators", response_model=UserIndicatorsResponse,
             operation_id="get_user_indicators",
-            tags=['mcp'],
             description="Get current user fitness indicators and thresholds.")
 async def get_user_indicators(
     request: Request,

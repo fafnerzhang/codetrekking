@@ -2,6 +2,7 @@ import { Agent } from "@mastra/core/agent";
 import { currentModel } from "../model";
 import { calendarTool, calculatorTool } from "../tools/utility-tools";
 import { generateCoachingInstructions } from "../utils/coaches";
+import { formatIndicatorsForLLM } from "../utils/indicators";
 
 
 export function createPhasePlanner() {
@@ -12,8 +13,14 @@ export function createPhasePlanner() {
     name: "phasePlanner",
     description: "Expert in training periodization and phase planning for endurance athletes. Designs structured training phases with progressive overload, specificity, and proper tapering.",
     instructions: ({ runtimeContext }) => {
+      const userIndicators = formatIndicatorsForLLM(runtimeContext);
       const coachingInstructions = generateCoachingInstructions(runtimeContext);
-      return coachingInstructions
+      const instructions = `## Coaching Methodology
+${coachingInstructions}
+
+## Athlete Profile
+${userIndicators}`
+      return instructions
     },
     model: currentModel,
     tools: {

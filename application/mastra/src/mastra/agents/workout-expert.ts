@@ -3,65 +3,76 @@ import { currentModel } from "../model";
 import { createMcpClientWithToken } from "../mcp/peakflow-client";
 import { getApiBaseUrl } from "./utils";
 import { WorkoutPlanSchema } from "../type";
+import { formatIndicatorsForLLM } from "../utils/indicators";
+import { generateCoachingInstructions } from "../utils/coaches";
 
 
 export function createWorkoutExpert() {
   console.log("🏃‍♂️ Creating Dynamic Workout Expert...");
 
+  // Cache for tools per access token to avoid recreating MCP client on every call
+  const toolsCache = new Map<string, any>();
+
   return new Agent({
     id: "workoutExpert",
     name: "workoutExpert",
     description: "Creates structured, data-driven running workout plans based on athlete goals, fitness levels, and training preferences. Optimized for both single-day workouts and multi-day weekly plans.",
-    instructions: `You are a world-class workout expert and running coach. You design scientifically-sound, practical running workouts that follow the WorkoutPlan schema.
+    instructions: ({runtimeContext}) => {
+      const userIndicators = formatIndicatorsForLLM(runtimeContext);
+      const coachMethodology = generateCoachingInstructions(runtimeContext);
+      return `You are an expert running coach who GENERATES detailed, structured workout plans from high-level workout specifications.
 
-## WorkoutPlan Schema
+## Coaching Methodology
+${coachMethodology}
 
-- title: string (concise, descriptive workout name)
-- description: string (workout purpose and key focus areas)
-- detail: array of workout items:
-  - segment: { type: "segment", duration (minutes >= 0.1), optional distance_range {min,max} (km), intensity_metric ("pace" | "power" | "heart_rate"), target_range {min,max}, description, pre (0-10) }
-  - loop_start: { type: "loop_start", id: string, repeat: number >= 1 }
-  - loop_end: { type: "loop_end", id: string }
-- estimated_tss: number (Training Stress Score)
-- total_time: number (minutes)
-- total_distance: number (kilometers)
+## Athlete Profile
+${userIndicators}
+
+## Your Role
+
+You will receive workout specifications with parameters like:
+- Workout type (easy run, intervals, tempo, recovery, rest day)
+- Workout goal/target
+- Distance range (optional)
+- Time range (optional)
+- Zone distribution (optional)
+- Target training zone (optional)
+
+**Your job is to DESIGN and CREATE a complete, detailed workout plan** with:
+1. Structured warmup segments
+2. Main workout segments (intervals, tempo blocks, easy running)
+3. Cool-down segments
+4. Specific pacing targets, durations, and PRE scores for each segment
+
+## WorkoutPlan Output Schema
+
+You MUST generate a workout plan with the following structure:
+
+- **title**: string - Concise, descriptive workout name (e.g., "VO2max 800m Repeats", "Easy Aerobic Run")
+- **description**: string - Workout purpose and key focus areas (2-3 sentences explaining the training stimulus)
+- **detail**: array of workout segments:
+  - **segment**: { type: "segment", duration: number (minutes, minimum 0.1), distance_range?: {min, max} (km, optional), intensity_metric: "pace" | "power" | "heart_rate", target_range: {min, max}, description: string, pre: number (0-10 RPE scale) }
+  - **loop_start**: { type: "loop_start", id: string, repeat: number (≥1) } - Start of interval/repeat block
+  - **loop_end**: { type: "loop_end", id: string } - End of interval/repeat block (must match loop_start id)
+- **estimated_tss**: number | null - Training Stress Score (use TSS estimation tool if available, otherwise estimate)
+- **total_time**: number | null - Total workout duration in minutes
+- **total_distance**: number | null - Total workout distance in kilometers
 
 ## Design Principles
 
-**1. Evidence-based structure:**
-- Every workout includes proper warm-up (10-15 min easy)
-- Main work follows specific training stimulus (intervals, tempo, easy, long run)
-- Cool-down period (5-10 min easy recovery)
+Use tools when available:
+- Call TSS estimation tools to calculate estimated_tss if available
+- Use athlete profile data to personalize pacing targets
 
-**2. Intensity targeting:**
-- pace: Use seconds/km format (e.g., 240-300 for 4:00-5:00 /km)
-- power: Use watts (e.g., 250-280)
-- heart_rate: Use bpm (e.g., 140-160)
-- Choose metric based on workout type and available data
+## Critical Rules
 
-**3. Progressive overload:**
-- Respect athlete's current fitness level
-- Build duration/intensity gradually
-- Consider recovery needs between hard sessions
+1. **ALWAYS generate a complete workout** - never return "No workout provided" or parsing errors
+2. **For rest days**: Return minimal plan with title, description, empty detail array, and null metrics
+3. **Match the requested workout type** - if asked for "easy run", design an easy run; if "intervals", design intervals
+4. **Be practical** - workouts should be immediately executable by the athlete
+5. **Use realistic pacing** - reference the athlete profile for appropriate pace ranges
 
-**4. Daily plan context:**
-When generating plans for weekly workflows:
-- Consider previous_workout to ensure proper recovery
-- Vary intensity across days (hard/easy principle)
-- Align workout_type with weekly training goals
-- Use zone_distribution and target_zone when specified
-
-**5. Practical execution:**
-- Clear segment descriptions
-- Realistic time/distance ranges
-- PRE scores (0-10) reflect intended effort
-- Loop structures for interval work
-
-## Response Format
-
-The agent is called with structuredOutput schema, so return the complete WorkoutPlan object matching the schema. The system will validate it automatically.
-
-Always aim to produce practical, immediately-implementable workouts that athletes can execute confidently.`,
+You are a GENERATOR, not a PARSER. Create detailed, actionable workout plans from the specifications provided.`},
     model: currentModel,
     // Note: experimental_output schema is removed when used in agent networks
     // The agent should return JSON in text format following the schema described in instructions
@@ -71,7 +82,12 @@ Always aim to produce practical, immediately-implementable workouts that athlete
         console.warn("⚠️ No access token found in runtime context - tools will be empty until authentication");
         return {};
       }
-      
+      // Check cache first
+      if (toolsCache.has(accessToken)) {
+        console.log("✅ Using cached PeakFlow tools");
+        return toolsCache.get(accessToken);
+      }
+
       try {
         // Use the correct MCP endpoint - /mcp not /workout-mcp
         const apiBaseUrl = getApiBaseUrl();
@@ -80,6 +96,9 @@ Always aim to produce practical, immediately-implementable workouts that athlete
         // Get tools from the authenticated client
         const tools = await mcpClient.getTools();
         console.log(`✅ Workout expert dynamically loaded ${Object.keys(tools).length} PeakFlow tools`);
+
+        // Cache for this token
+        toolsCache.set(accessToken, tools);
 
         return tools;
       } catch (error) {

@@ -17,6 +17,7 @@ from ...database import User
 from ...database import get_elasticsearch_storage
 from .utils import get_user_thresholds
 from peakflow.analytics.tss import TSSCalculator, WorkoutPlan, WorkoutPlanSegment
+from peakflow.analytics.coaches import get_all_coaches, get_coach_by_id, CoachProfile
 
 logger = structlog.get_logger(__name__)
 
@@ -248,7 +249,7 @@ async def estimate_simple_segment_tss(
 @router.post("/workout/estimate-tss",
             response_model=WorkoutTSSEstimate,
             operation_id="estimate_workout_tss",
-            tags=["mcp", "tss"],
+            # tags=["mcp", "tss"],
             summary="Estimate TSS for workout plan",
             description="""
 Calculate Training Stress Score (TSS) for a planned workout before execution.
@@ -375,4 +376,121 @@ async def estimate_workout_tss(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to estimate workout TSS"
+        )
+
+
+@router.get("/workout/coaches",
+           response_model=list[CoachProfile],
+           operation_id="get_all_coaches",
+           summary="Get all coaching methodology profiles",
+           description="""
+Retrieve complete coaching methodology profiles from renowned endurance coaches.
+
+**Designed for LLM Integration**: Provides structured coaching philosophies, workout preferences,
+and training phase principles for AI-powered workout planning and coaching recommendations.
+
+**Coaches Included**:
+- **Joe Friel**: Classic periodization, power-based training, race-specific fitness
+- **Brad Hudson**: Adaptive training, medium-long run emphasis, marathon-specific
+- **Jack Daniels**: VDOT system, lactate threshold focus, scientific training zones
+- **Hanson's Method**: Cumulative fatigue, high-frequency moderate volume, marathon specialization
+
+**Each Profile Contains**:
+- Coaching philosophy and background
+- Primary coaching style and sport focus
+- Workout structure preferences
+- Detailed training phase breakdowns
+- Key principles and methods
+- Notable athletes and publications
+""")
+async def get_coaches(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+) -> list[CoachProfile]:
+    """Get all coaching methodology profiles."""
+
+    try:
+        coaches = get_all_coaches()
+
+        # Log user action
+        audit_logger.log_user_action(
+            request=request,
+            action="coaches_retrieved",
+            user_id=current_user.id,
+            details={"coach_count": len(coaches)}
+        )
+
+        logger.info(f"Retrieved {len(coaches)} coaching profiles for user {current_user.id}")
+
+        return coaches
+
+    except Exception as e:
+        logger.error(f"Error retrieving coaches for user {current_user.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve coaching profiles"
+        )
+
+
+@router.get("/workout/coaches/{coach_id}",
+           response_model=CoachProfile,
+           operation_id="get_coach_by_id",
+           summary="Get specific coach profile",
+           description="""
+Retrieve detailed profile for a specific coaching methodology.
+
+**Available Coach IDs**:
+- `joe_friel` - Classic periodization and power-based training
+- `brad_hudson` - Adaptive training with medium-long run emphasis
+- `jack_daniels` - VDOT system and lactate threshold training
+- `hansons` - Cumulative fatigue and marathon-specific methods
+
+**Profile Details**:
+- Complete coaching philosophy and background
+- Sport specialization and expertise areas
+- Workout structure and periodization preferences
+- Training phase structure with intensity distributions
+- Key principles and coaching methods
+- Notable athletes coached and publications
+
+**Use Cases**:
+- LLM-driven workout plan generation based on specific methodology
+- Educational content about coaching approaches
+- Training plan customization and adaptation
+""")
+async def get_coach(
+    request: Request,
+    coach_id: str,
+    current_user: User = Depends(get_current_user),
+) -> CoachProfile:
+    """Get specific coach profile by ID."""
+
+    try:
+        coach = get_coach_by_id(coach_id)
+
+        if not coach:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Coach with ID '{coach_id}' not found"
+            )
+
+        # Log user action
+        audit_logger.log_user_action(
+            request=request,
+            action="coach_profile_retrieved",
+            user_id=current_user.id,
+            details={"coach_id": coach_id, "coach_name": coach.name}
+        )
+
+        logger.info(f"Retrieved coach profile '{coach_id}' for user {current_user.id}")
+
+        return coach
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving coach '{coach_id}' for user {current_user.id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve coach profile"
         )

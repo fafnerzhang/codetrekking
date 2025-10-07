@@ -308,6 +308,11 @@ class AuthMiddleware:
         method = scope["method"]
         headers = dict(scope.get("headers", []))
 
+        # Always allow OPTIONS requests (CORS preflight)
+        if method == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
+
         # Check if this path requires authentication
         if self._is_public_path(path):
             await self.app(scope, receive, send)

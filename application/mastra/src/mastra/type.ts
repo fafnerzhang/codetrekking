@@ -58,6 +58,7 @@ const WorkoutItemSchema = z.union([WorkoutSegmentSchema, LoopStartSchema, LoopEn
 export const WorkoutPlanSchema = z.object({
   title: z.string().describe("Title of the workout plan"),
   id: z.string().describe("Unique identifier for the workout plan"),
+  week_id: z.string().optional().describe("Identifier of the parent week this workout belongs to"),
   date: z.coerce.date().optional().describe("Date the workout assigned"),
   description: z.string().describe("Detailed description of the workout plan or error message if workout cannot be generated"),
   detail: z.array(WorkoutItemSchema).describe("Array of workout items including segments and loop markers (empty array if error)"),
@@ -81,19 +82,22 @@ export const CriticalWorkoutSchema = z.object({
 });
 
 export const TrainingWeekSchema = z.object({
-  id: z.string().describe("Week identifier (e.g., 'week-1', 'base-week-3')"),
+  week_id: z.string().describe("Week identifier (e.g., 'week-1', 'base-week-3')"),
+  phase_id: z.string().describe("Identifier of the parent training phase"),
   start_date: z.coerce.date().describe("Week start date (typically Monday)"),
   end_date: z.coerce.date().describe("Week end date (typically Sunday)"),
   description: z.string().describe("Weekly focus and training objectives"),
+  weekly_mileage: z.number().nullable().optional().describe("Planned total weekly mileage in kilometers"),
   critical_workouts: z.array(CriticalWorkoutSchema).describe("Key workouts for this week (typically 2-3)"),
 });
 
 export const TrainingPhaseSchema = z.object({
+  phase_id: z.string().describe("Unique identifier for the training phase"),
   name: z.string().describe("Phase name (e.g., 'Base Building', 'Specific Preparation')"),
   tag: z.string().describe("Short tag/label for the phase (e.g., 'base', 'build', 'peak', 'taper')"),
   description: z.string().describe("Phase objectives and training focus"),
   weeks: z.array(TrainingWeekSchema).describe("Week-by-week breakdown for this phase"),
-  workout_focus: z.array(z.string()).describe("Primary training focus areas for the phase (e.g., aerobic base, threshold, VO2max)"),
+  workout_focus: z.array(z.string()).min(1).describe("Primary training focus areas for the phase (e.g., ['aerobic base'], ['threshold', 'VO2max'], ['race pace', 'speed endurance'])"),
 });
 
 export type RaceEvent = z.infer<typeof RaceEventSchema>;

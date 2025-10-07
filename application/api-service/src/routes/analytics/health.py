@@ -516,7 +516,6 @@ async def get_health_metrics_markdown(
 
 @router.post("/health/summary", response_model=HealthMetricsResponse,
              operation_id="get_health_metrics_json",
-             tags=["mcp"],
              description="Get user health metrics (HRV, heart rate, battery status) for a date range with night averages.")
 async def get_health_metrics(
     request: Request,

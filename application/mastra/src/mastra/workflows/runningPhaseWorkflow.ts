@@ -71,14 +71,19 @@ ${race_schedule.map(r => {
 You MUST generate a structured training plan array with multiple phases. Each phase must include:
 
 1. Phase metadata:
+   - phase_id: Unique identifier (e.g., "build-phase", "peak-phase")
    - name: Full phase name (e.g., "Base Building", "Build Phase", "Peak Phase", "Taper")
    - tag: Short identifier (e.g., "base", "build", "peak", "taper")
    - description: Training objectives and focus for this phase
+   - workout_focus: REQUIRED array with at least one focus area (e.g., ["aerobic base", "easy volume"] for base phase, ["threshold", "VO2max"] for build, ["race pace", "speed"] for peak, ["freshness", "sharpness"] for taper)
 
 2. Week-by-week breakdown for each phase:
-   - Each week needs: id (e.g., "week-1"), start_date, end_date, description
-   - Each week needs 2-3 critical_workouts with id and description
+   - Each week needs: id (e.g., "week-1"), phase_id (matching parent phase), start_date (ISO string), end_date (ISO string), description
+   - weekly_mileage: Number or null/omit if not specified
+   - Each week needs 2-3 critical_workouts array with objects containing: id and description
 3. The entire plan duration must fit within the ${weeksToRace} weeks leading up to the primary race.
+
+IMPORTANT: Return valid JSON matching the schema. Dates should be ISO strings (YYYY-MM-DD format).
 
 **Example structure you must follow:**
 - Phase 1 (Base): Weeks 1-4 with aerobic foundation workouts
@@ -92,7 +97,9 @@ Generate the complete phase array now.`;
 
     // Generate structured phases directly
     logger.info(`Phase Workflow runtimeContext: ${JSON.stringify(runtimeContext)}`);
-    const stream = await agent.stream(
+
+    // Use agent.generate instead of agent.stream for better error handling with structured output
+    const result = await agent.generate(
       [{ role: 'user', content: prompt }],
       {
         structuredOutput: {
@@ -103,8 +110,13 @@ Generate the complete phase array now.`;
         runtimeContext: runtimeContext
       }
     );
-    await stream.objectStream.pipeTo(writer!);
-    const object = await stream.object;
+
+    if (!result.object) {
+      logger.error('❌ phasePlanner failed to generate structured output');
+      throw new Error('Failed to generate training phases: Invalid structured output from phasePlanner');
+    }
+
+    const object = result.object;
 
     // Validate result
     if (!object || !object.phases || object.phases.length === 0) {
@@ -114,6 +126,7 @@ Generate the complete phase array now.`;
 
     logger.info(`Generated ${object.phases.length} training phases`);
 
+    logger.info('✅ Training phases generated successfully');
     return {
       phases: object.phases,
     };
