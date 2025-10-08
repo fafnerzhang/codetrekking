@@ -17,7 +17,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi_mcp import AuthConfig, FastApiMCP
 
-from .routes import auth, garmin, garmin_credentials, tasks, monitoring, analytics
+from .routes import auth, garmin, garmin_credentials, tasks, monitoring, analytics, training_plans
 
 from peakflow_tasks.api import TaskManager
 
@@ -206,6 +206,7 @@ app.include_router(garmin_credentials.router)
 app.include_router(tasks.router)
 app.include_router(analytics.router)
 app.include_router(monitoring.router)
+app.include_router(training_plans.router)
 
 
 # Test authentication endpoint (demonstrates dependency-based auth)

@@ -50,18 +50,49 @@ You MUST generate a workout plan with the following structure:
 
 - **title**: string - Concise, descriptive workout name (e.g., "VO2max 800m Repeats", "Easy Aerobic Run")
 - **description**: string - Workout purpose and key focus areas (2-3 sentences explaining the training stimulus)
-- **detail**: array of workout segments:
-  - **segment**: { type: "segment", duration: number (minutes, minimum 0.1), distance_range?: {min, max} (km, optional), intensity_metric: "pace" | "power" | "heart_rate", target_range: {min, max}, description: string, pre: number (0-10 RPE scale) }
-  - **loop_start**: { type: "loop_start", id: string, repeat: number (≥1) } - Start of interval/repeat block
-  - **loop_end**: { type: "loop_end", id: string } - End of interval/repeat block (must match loop_start id)
-- **estimated_tss**: number | null - Training Stress Score (use TSS estimation tool if available, otherwise estimate)
+- **detail**: array of workout items, where each item is ONE OF:
+  - Segment object: { type: "segment", duration: number (minutes, minimum 0.1), distance_range?: {min, max} (km, optional), intensity_metric: "pace" | "power" | "heart_rate", target_range: {min, max}, description: string, pre: number (0-10 RPE scale) }
+  - Loop start object: { type: "loop_start", id: string, repeat: number (≥1) } - Start of interval/repeat block
+  - Loop end object: { type: "loop_end", id: string } - End of interval/repeat block (must match loop_start id)
+
+  CRITICAL FORMATTING RULES:
+  1. Each array element is a DIRECT object with a "type" field, NOT wrapped in another object
+     ✅ CORRECT: [{ type: "segment", duration: 10, ... }, { type: "loop_start", id: "intervals", repeat: 4 }]
+     ❌ WRONG: [{ segment: { type: "segment", duration: 10, ... }}, { loop_start: { type: "loop_start", ... }}]
+
+  2. Loop markers define WHAT to repeat, not a container for pre-expanded repetitions
+     ✅ CORRECT (4x800m with 200m recovery):
+     [
+       { type: "loop_start", id: "intervals", repeat: 4 },
+       { type: "segment", duration: 3, description: "800m hard", ... },
+       { type: "segment", duration: 1, description: "200m recovery jog", ... },
+       { type: "loop_end", id: "intervals" }
+     ]
+
+     ❌ WRONG (expanding all repetitions manually):
+     [
+       { type: "loop_start", id: "intervals", repeat: 4 },
+       { type: "segment", ... }, // 800m #1
+       { type: "segment", ... }, // recovery #1
+       { type: "segment", ... }, // 800m #2
+       { type: "segment", ... }, // recovery #2
+       { type: "segment", ... }, // 800m #3
+       { type: "segment", ... }, // recovery #3
+       { type: "segment", ... }, // 800m #4
+       { type: "segment", ... }, // recovery #4
+       { type: "loop_end", id: "intervals" }
+     ]
+
+  3. Everything between loop_start and loop_end repeats "repeat" times. Only include ONE iteration.
+
+- **estimated_tss**: number | null - Training Stress Score (use TSS estimation tool)
 - **total_time**: number | null - Total workout duration in minutes
 - **total_distance**: number | null - Total workout distance in kilometers
 
 ## Design Principles
 
-Use tools when available:
-- Call TSS estimation tools to calculate estimated_tss if available
+Use tools:
+- Call TSS estimation tools to calculate estimated_tss
 - Use athlete profile data to personalize pacing targets
 
 ## Critical Rules
@@ -96,7 +127,6 @@ You are a GENERATOR, not a PARSER. Create detailed, actionable workout plans fro
         // Get tools from the authenticated client
         const tools = await mcpClient.getTools();
         console.log(`✅ Workout expert dynamically loaded ${Object.keys(tools).length} PeakFlow tools`);
-
         // Cache for this token
         toolsCache.set(accessToken, tools);
 

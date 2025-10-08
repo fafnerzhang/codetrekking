@@ -55,18 +55,32 @@ const LoopEndSchema = z.object({
 // Use z.lazy for recursive schema to allow nested loops - wait, no longer needed since flat
 const WorkoutItemSchema = z.union([WorkoutSegmentSchema, LoopStartSchema, LoopEndSchema]);
 
-export const WorkoutPlanSchema = z.object({
+// Schema for LLM structured output - excludes metadata that workflow adds
+export const WorkoutPlanLLMSchema = z.object({
   title: z.string().describe("Title of the workout plan"),
-  id: z.string().describe("Unique identifier for the workout plan"),
-  week_id: z.string().optional().describe("Identifier of the parent week this workout belongs to"),
-  date: z.coerce.date().optional().describe("Date the workout assigned"),
   description: z.string().describe("Detailed description of the workout plan or error message if workout cannot be generated"),
   detail: z.array(WorkoutItemSchema).describe("Array of workout items including segments and loop markers (empty array if error)"),
   estimated_tss: z.number().nullable().optional().describe("Estimated Training Stress Score for the workout (null if unavailable)"),
   total_time: z.number().nullable().optional().describe("Total estimated time for the workout in minutes (null if unavailable)"),
   total_distance: z.number().nullable().optional().describe("Total estimated distance for the workout in kilometers (null if unavailable)"),
 });
+
+// Full schema with all fields (for backward compatibility and complete type)
+export const WorkoutPlanSchema = WorkoutPlanLLMSchema.extend({
+  workout_id: z.string().describe("Unique identifier for the workout plan"),
+  week_id: z.string().optional().describe("Identifier of the parent week this workout belongs to"),
+  date: z.coerce.date().optional().describe("Date the workout assigned"),
+});
 export type WorkoutPlan = z.infer<typeof WorkoutPlanSchema>;
+
+// Output schema for workflow steps - includes additional metadata not in LLM output
+export const WorkoutPlanOutputSchema = WorkoutPlanSchema.extend({
+  phase_id: z.string().describe("Parent phase identifier"),
+  week_id: z.string().describe("Parent week identifier (override optional from WorkoutPlanSchema)"),
+  date: z.coerce.date().describe("Workout date (override optional from WorkoutPlanSchema)"),
+  stored: z.boolean().optional().describe("Whether workout was successfully stored in database"),
+});
+export type WorkoutPlanOutput = z.infer<typeof WorkoutPlanOutputSchema>;
 
 // Phase Planning Schemas
 export const RaceEventSchema = z.object({

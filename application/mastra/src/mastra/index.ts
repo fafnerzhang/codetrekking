@@ -6,7 +6,7 @@ import { workoutEnhancer } from './agents/workout-enhancer';
 import { Memory } from '@mastra/memory';
 import { Agent } from '@mastra/core/agent';
 import { currentModel } from "./model";
-import { generateDetailedWorkoutsWorkflow, weeklyPlanWorkflow } from './workflows/generateDetailedWorkoutsWorkflow';
+import { generateDetailedWorkoutsWorkflow } from './workflows/generateDetailedWorkoutsWorkflow';
 import { runningPhaseWorkflow } from './workflows/runningPhaseWorkflow';
 import { PinoLogger } from '@mastra/loggers';
 const connectionString = `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`;
@@ -182,7 +182,7 @@ export const mastra = new Mastra({
   },
   workflows: {
     runningPhaseWorkflow,
-    weeklyPlanWorkflow
+    generateDetailedWorkoutsWorkflow
   },
   storage: sharedPostgresStore,
   logger: logger

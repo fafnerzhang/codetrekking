@@ -9,3 +9,6 @@ storage/*/
 CLAUDE.md
 *copilot-instructions.md
 *.log
+application/playground-ui/*
+application/playground/*
+application/figma-ui/*

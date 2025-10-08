@@ -86,3 +86,16 @@ mastra-logs:    ## Show Mastra server logs
 mastra-dev:    ## Start Mastra development server
 	@echo "🚀 Starting Mastra development server..."
 	cd application/peakview/mastra && npm run dev
+
+mastra-memory-clean:    ## Clean Mastra memory
+	@echo "🧹 Cleaning Mastra memory..."
+	cd application/api-service && uv run clean_mastra_memory.py
+
+mastra-training-phase-clean:    ## Clean old training phases in Mastra
+	@echo "🧹 Cleaning old training phases in Mastra..."
+	cd application/api-service && uv run -m scripts.cleanup_training_plans
+
+# === Workout API Testing ===
+
+test-setup:    ## Setup test phase and show workflow input for UI
+	@bash setup_test.sh

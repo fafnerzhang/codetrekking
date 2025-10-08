@@ -7,6 +7,7 @@ from typing import Optional, List
 import uuid
 
 from sqlmodel import SQLModel, Field, Relationship
+from sqlalchemy import and_
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -297,6 +298,148 @@ class UserGarminCredentials(SQLModel, table=True):
 
     def __repr__(self):
         return f"<UserGarminCredentials(id={self.id}, user_id={self.user_id}, username={self.garmin_username})>"
+
+
+class TrainingPhase(SQLModel, table=True):
+    """Training phase with weeks of structured workouts."""
+
+    __tablename__ = "training_phases"
+
+    # Composite primary key: (user_id, phase_id)
+    user_id: uuid.UUID = Field(foreign_key="users.id", primary_key=True)
+    phase_id: str = Field(max_length=100, primary_key=True)
+
+    # Phase metadata
+    name: str = Field(max_length=200)
+    tag: Optional[str] = Field(default=None, max_length=50)  # Short tag: base, build, peak, taper
+    description: Optional[str] = Field(default=None)  # Phase objectives and training focus
+    coach_id: Optional[str] = Field(default=None, max_length=100)
+    phase_type: Optional[str] = Field(default=None, max_length=50)  # Deprecated: use tag instead
+    start_date: Optional[datetime] = Field(default=None)
+    end_date: Optional[datetime] = Field(default=None)
+
+    # JSON fields
+    workout_focus: Optional[str] = Field(default=None)  # JSON array of focus areas
+    critical_workouts: Optional[str] = Field(default=None)  # JSON array of critical workout definitions (deprecated)
+    notes: Optional[str] = Field(default=None)  # Additional notes
+
+    # Timestamps
+    created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    user: Optional[User] = Relationship()
+    weeks: List["TrainingWeek"] = Relationship(
+        back_populates="phase",
+        sa_relationship_kwargs={
+            "primaryjoin": "and_(TrainingPhase.user_id==TrainingWeek.user_id, TrainingPhase.phase_id==TrainingWeek.phase_id)",
+            "cascade": "all, delete-orphan",
+            "viewonly": False
+        }
+    )
+
+    def __repr__(self):
+        return f"<TrainingPhase(user_id={self.user_id}, phase_id={self.phase_id}, name={self.name})>"
+
+
+class TrainingWeek(SQLModel, table=True):
+    """Training week within a phase."""
+
+    __tablename__ = "training_weeks"
+
+    # Composite primary key: (user_id, phase_id, week_id)
+    # Foreign key to TrainingPhase (user_id, phase_id)
+    user_id: uuid.UUID = Field(primary_key=True, foreign_key="training_phases.user_id")
+    phase_id: str = Field(max_length=100, primary_key=True, foreign_key="training_phases.phase_id")
+    week_id: str = Field(max_length=100, primary_key=True)
+
+    # Week metadata
+    week_number: int  # 1-based week number within phase
+    start_date: Optional[datetime] = Field(default=None)  # Week start date
+    end_date: Optional[datetime] = Field(default=None)  # Week end date
+    description: Optional[str] = Field(default=None)  # Weekly focus and training objectives
+    weekly_mileage: Optional[float] = Field(default=None)  # Planned weekly mileage in km
+    critical_workouts: Optional[str] = Field(default=None)  # JSON array of CriticalWorkout objects
+
+    # Legacy fields (still supported for backward compatibility)
+    weekly_tss_target: Optional[float] = Field(default=None)
+    focus: Optional[str] = Field(default=None, max_length=200)  # Deprecated: use description
+    notes: Optional[str] = Field(default=None)  # Additional notes
+
+    # Timestamps
+    created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    phase: Optional[TrainingPhase] = Relationship(
+        back_populates="weeks",
+        sa_relationship_kwargs={
+            "primaryjoin": "and_(TrainingWeek.user_id==TrainingPhase.user_id, TrainingWeek.phase_id==TrainingPhase.phase_id)",
+            "viewonly": False
+        }
+    )
+    workouts: List["WorkoutPlan"] = Relationship(
+        back_populates="week",
+        sa_relationship_kwargs={
+            "primaryjoin": "and_(TrainingWeek.user_id==WorkoutPlan.user_id, TrainingWeek.phase_id==WorkoutPlan.phase_id, TrainingWeek.week_id==WorkoutPlan.week_id)",
+            "cascade": "all, delete-orphan",
+            "viewonly": False
+        }
+    )
+
+    def __repr__(self):
+        return f"<TrainingWeek(user_id={self.user_id}, phase_id={self.phase_id}, week_id={self.week_id}, week_number={self.week_number})>"
+
+
+class WorkoutPlan(SQLModel, table=True):
+    """Individual workout within a training week."""
+
+    __tablename__ = "workout_plans"
+
+    # Primary key
+    id: Optional[uuid.UUID] = Field(default_factory=uuid.uuid4, primary_key=True)
+
+    # Foreign key to week (composite: user_id, phase_id, week_id)
+    user_id: uuid.UUID = Field(foreign_key="training_weeks.user_id", index=True)
+    phase_id: str = Field(max_length=100, foreign_key="training_weeks.phase_id", index=True)
+    week_id: str = Field(max_length=100, foreign_key="training_weeks.week_id", index=True)
+
+    # Workout metadata
+    name: str = Field(max_length=200)
+    day_of_week: int = Field(ge=0, le=6)  # 0=Monday, 6=Sunday
+    workout_type: str = Field(max_length=50)  # threshold, intervals, long_run, recovery, etc.
+
+    # JSON fields for workout structure
+    segments: Optional[str] = Field(default=None)  # JSON array of WorkoutPlanSegment
+    workout_metadata: Optional[str] = Field(default=None)  # JSON object with TSS, duration, etc.
+
+    # Timestamps
+    created_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Optional[datetime] = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    week: Optional[TrainingWeek] = Relationship(
+        back_populates="workouts",
+        sa_relationship_kwargs={
+            "primaryjoin": "and_(WorkoutPlan.user_id==TrainingWeek.user_id, WorkoutPlan.phase_id==TrainingWeek.phase_id, WorkoutPlan.week_id==TrainingWeek.week_id)",
+            "viewonly": False
+        }
+    )
+
+    def __repr__(self):
+        return f"<WorkoutPlan(id={self.id}, name={self.name}, week_id={self.week_id})>"
 
 
 # Convenience aliases for backward compatibility
