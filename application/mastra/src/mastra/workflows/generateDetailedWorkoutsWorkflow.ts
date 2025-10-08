@@ -3,6 +3,24 @@ import { z } from 'zod';
 import { WorkoutPlanLLMSchema, WorkoutPlanOutputSchema, TrainingWeekSchema } from '../type';
 import logger from '../../logger';
 
+// Helper to format date in Asia/Taipei timezone
+function formatTaipeiDate(date: Date | string): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  // Format in Taipei timezone
+  const taipeiDate = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+  const year = taipeiDate.getFullYear();
+  const month = String(taipeiDate.getMonth() + 1).padStart(2, '0');
+  const day = String(taipeiDate.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+// Helper to get day of week in Asia/Taipei timezone (0=Sunday, 6=Saturday)
+function getTaipeiDayOfWeek(date: Date | string): number {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  const taipeiDate = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+  return taipeiDate.getDay();
+}
+
 // Input schema for single day workout request
 const DailyWorkoutRequestSchema = z.object({
   id: z.string().describe("Unique identifier for this workout day"),
@@ -57,11 +75,15 @@ const enhanceWeeklyWorkouts = createStep({
       ? training_week.end_date
       : new Date(training_week.end_date);
 
+    // Format dates in Taipei timezone
+    const startDateStr = formatTaipeiDate(startDate);
+    const endDateStr = formatTaipeiDate(endDate);
+
     const prompt = `Generate a COMPLETE weekly workout plan from this training week structure.
 
 **Week Context:**
 - Week ID: ${training_week.week_id}
-- Week dates: ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}
+- Week dates: ${startDateStr} to ${endDateStr} (Asia/Taipei timezone)
 - Weekly focus: ${training_week.description}
 - Target weekly mileage: ${training_week.weekly_mileage || 'Not specified'} km
 - Available training days: ${available_days_per_week} days/week
@@ -140,10 +162,13 @@ const processDailyWorkout = createStep({
       week_id
     } = inputData;
 
+    // Format date in Taipei timezone
+    const dateStr = formatTaipeiDate(date);
+
     // Build concise prompt - agent already has coach methodology and design principles
     const specs = [
       `Type: ${workout_type}`,
-      `Date: ${date.toISOString().split('T')[0]}`,
+      `Date: ${dateStr} (Asia/Taipei timezone)`,
       `Goal: ${workout_target}`,
       distance_range && `Distance: ${distance_range.min}-${distance_range.max} km`,
       time_range && `Duration: ${time_range.min}-${time_range.max} minutes`,
@@ -161,7 +186,7 @@ Provide the output in the specified structured format.`;
     if (!agent) {
       throw new Error('workoutExpert agent not found');
     }
-    logger.info(`Generating detailed workout for ${id} (${workout_type}) on ${date.toISOString().split('T')[0]}, specs:\n${specs}`);
+    logger.info(`Generating detailed workout for ${id} (${workout_type}) on ${dateStr}, specs:\n${specs}`);
 
     // Generate workout plan with structured output (LLM schema - no week_id/workout_id/date)
     // Retry mechanism with exponential backoff
@@ -227,8 +252,8 @@ Provide the output in the specified structured format.`;
         logger.warn('No access token found in runtime context, skipping API storage');
       } else {
         logger.info(`Storing workout to API: ${apiBaseUrl}/training-plans/workouts`);
-        // Map workout plan to API request format
-        const dayOfWeek = new Date(date).getDay(); // 0=Sunday, need to convert to 0=Monday
+        // Map workout plan to API request format - use Taipei timezone
+        const dayOfWeek = getTaipeiDayOfWeek(date); // 0=Sunday, need to convert to 0=Monday
         const adjustedDayOfWeek = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
 
         const apiRequest = {

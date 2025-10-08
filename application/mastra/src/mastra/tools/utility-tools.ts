@@ -1,6 +1,22 @@
 import { createTool } from "@mastra/core";
 import { z } from "zod";
 
+// Helper to get date in Asia/Taipei timezone
+function getTaipeiDate(dateString?: string): Date {
+  const date = dateString ? new Date(dateString) : new Date();
+  // Get UTC time and convert to Taipei (UTC+8)
+  const taipeiTime = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Taipei' }));
+  return taipeiTime;
+}
+
+// Helper to format date in Asia/Taipei timezone
+function formatTaipeiDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export const calendarTool = createTool({
   id: "calendar-tool",
   description: "Get calendar information including current date, day of week, date calculations, and week boundaries. Useful for workout scheduling and date planning.",
@@ -33,71 +49,76 @@ export const calendarTool = createTool({
 
     switch (operation) {
       case "current_date": {
-        const now = new Date();
+        const now = getTaipeiDate();
+        const dateStr = formatTaipeiDate(now);
         return {
-          result: now.toISOString().split('T')[0],
-          details: `Current date: ${now.toDateString()}`,
+          result: dateStr,
+          details: `Current date in Asia/Taipei: ${dateStr}`,
         };
       }
 
       case "day_of_week": {
         if (!date1) throw new Error("date1 required for day_of_week");
-        const d = new Date(date1);
+        const d = getTaipeiDate(date1);
         const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
         return {
           result: dayNames[d.getDay()],
-          details: `${date1} is a ${dayNames[d.getDay()]}`,
+          details: `${date1} is a ${dayNames[d.getDay()]} in Asia/Taipei timezone`,
         };
       }
 
       case "days_between": {
         if (!date1 || !date2) throw new Error("date1 and date2 required for days_between");
-        const d1 = new Date(date1);
-        const d2 = new Date(date2);
+        const d1 = getTaipeiDate(date1);
+        const d2 = getTaipeiDate(date2);
         const diffTime = Math.abs(d2.getTime() - d1.getTime());
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         return {
           result: diffDays,
-          details: `${diffDays} days between ${date1} and ${date2}`,
+          details: `${diffDays} days between ${date1} and ${date2} (Asia/Taipei timezone)`,
         };
       }
 
       case "add_days": {
         if (!date1 || days === undefined) throw new Error("date1 and days required for add_days");
-        const d = new Date(date1);
+        const d = getTaipeiDate(date1);
         d.setDate(d.getDate() + days);
+        const resultDate = formatTaipeiDate(d);
         return {
-          result: d.toISOString().split('T')[0],
-          details: `${date1} + ${days} days = ${d.toISOString().split('T')[0]}`,
+          result: resultDate,
+          details: `${date1} + ${days} days = ${resultDate} (Asia/Taipei timezone)`,
         };
       }
 
       case "week_start_end": {
         if (!date1) throw new Error("date1 required for week_start_end");
-        const d = new Date(date1);
+        const d = getTaipeiDate(date1);
         const day = d.getDay();
         const diff = d.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
-        const monday = new Date(d.setDate(diff));
+        const monday = new Date(d);
+        monday.setDate(diff);
         const sunday = new Date(monday);
         sunday.setDate(monday.getDate() + 6);
+        const mondayStr = formatTaipeiDate(monday);
+        const sundayStr = formatTaipeiDate(sunday);
         return {
           result: {
-            monday: monday.toISOString().split('T')[0],
-            sunday: sunday.toISOString().split('T')[0],
+            monday: mondayStr,
+            sunday: sundayStr,
           },
-          details: `Week containing ${date1}: Monday ${monday.toISOString().split('T')[0]} to Sunday ${sunday.toISOString().split('T')[0]}`,
+          details: `Week containing ${date1}: Monday ${mondayStr} to Sunday ${sundayStr} (Asia/Taipei timezone)`,
         };
       }
 
       case "weeks_between": {
         if (!date1 || !date2) throw new Error("date1 and date2 required for weeks_between");
-        const d1 = new Date(date1);
-        const d2 = new Date(date2);
+        const d1 = getTaipeiDate(date1);
+        const d2 = getTaipeiDate(date2);
         const diffTime = Math.abs(d2.getTime() - d1.getTime());
         const weeks = Math.ceil(diffTime / (1000 * 60 * 60 * 24 * 7));
         return {
           result: weeks,
-          details: `${weeks} weeks between ${date1} and ${date2}`,
+          details: `${weeks} weeks between ${date1} and ${date2} (Asia/Taipei timezone)`,
         };
       }
 

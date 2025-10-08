@@ -4,6 +4,29 @@
 
 import { RuntimeContext } from "@mastra/core/runtime-context";
 
+export interface ZoneInfo {
+  zone_number: number;
+  zone_name: string;
+  range_min: number;
+  range_max: number;
+  range_unit: string;
+  description: string;
+  purpose: string;
+}
+
+export interface ZoneRanges {
+  zone_type: string;
+  threshold_value?: number;
+  method: string;
+  zones: ZoneInfo[];
+}
+
+export interface UserZones {
+  power_zones?: ZoneRanges;
+  pace_zones?: ZoneRanges;
+  heart_rate_zones?: ZoneRanges;
+}
+
 export interface UserIndicators {
   user_id: string;
   updated_at: string;
@@ -73,6 +96,53 @@ export async function fetchUserIndicators(accessToken: string, apiBaseUrl: strin
   }
 }
 
+/**
+ * Fetch zone distributions from API service
+ */
+export async function fetchZoneDistributions(
+  accessToken: string,
+  apiBaseUrl: string,
+  days: number = 30
+): Promise<ZoneDistributions | null> {
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/v1/analytics/zone-distributions?days=${days}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.warn('Zone distributions not found - user may not have training data yet');
+        return null;
+      }
+      throw new Error(`Failed to fetch zone distributions: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data as ZoneDistributions;
+  } catch (error) {
+    console.error('Error fetching zone distributions:', error);
+    return null;
+  }
+}
+
+
+/**
+ * Format zone ranges for LLM
+ */
+function formatZoneRanges(zoneRanges: ZoneRanges): string[] {
+  const lines: string[] = [];
+
+  for (const zone of zoneRanges.zones) {
+    const rangeStr = `${zone.range_min.toFixed(zone.range_unit === 'min/km' ? 2 : 0)}-${zone.range_max.toFixed(zone.range_unit === 'min/km' ? 2 : 0)}${zone.range_unit}`;
+    lines.push(`  - Zone ${zone.zone_number} (${zone.zone_name}): ${rangeStr} - ${zone.purpose}`);
+  }
+
+  return lines;
+}
 
 /**
  * Format user indicators for LLM context
@@ -80,6 +150,8 @@ export async function fetchUserIndicators(accessToken: string, apiBaseUrl: strin
 // Make the input of type RuntimeContext
 export function formatIndicatorsForLLM(runtimeContext: RuntimeContext): string {
   const indicators = runtimeContext.get('userIndicators') as UserIndicators | null | undefined;
+  const userZones = runtimeContext.get('userZones') as UserZones | null | undefined;
+
   if (!indicators) {
     return `**User Indicators:** Not available. User has not set up fitness indicators yet.`;
   }
@@ -111,6 +183,29 @@ export function formatIndicatorsForLLM(runtimeContext: RuntimeContext): string {
     }
     if (indicators.max_pace) {
       sections.push(`- Max Pace: ${indicators.max_pace} min/km`);
+    }
+  }
+
+  // Training Zones from API
+  if (userZones) {
+    sections.push(`\n**Training Zones:**`);
+
+    if (userZones.heart_rate_zones) {
+      sections.push(`\n*Heart Rate Zones (${userZones.heart_rate_zones.method}, LTHR ${userZones.heart_rate_zones.threshold_value} BPM):*`);
+      const hrLines = formatZoneRanges(userZones.heart_rate_zones);
+      sections.push(...hrLines);
+    }
+
+    if (userZones.power_zones) {
+      sections.push(`\n*Power Zones (${userZones.power_zones.method}, FTP ${userZones.power_zones.threshold_value}W):*`);
+      const powerLines = formatZoneRanges(userZones.power_zones);
+      sections.push(...powerLines);
+    }
+
+    if (userZones.pace_zones) {
+      sections.push(`\n*Pace Zones (${userZones.pace_zones.method}, Threshold ${userZones.pace_zones.threshold_value?.toFixed(2)} min/km):*`);
+      const paceLines = formatZoneRanges(userZones.pace_zones);
+      sections.push(...paceLines);
     }
   }
 

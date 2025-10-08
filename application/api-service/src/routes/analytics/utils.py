@@ -182,6 +182,8 @@ def calculate_zone_distribution_efficient(
         return distribution
 
     try:
+        logger.info(f"calculate_zone_distribution_efficient called: field={field_name}, total_records={total_records}, num_zones={len(zones) if zones else 0}")
+
         # Build range aggregation for zones
         ranges = []
         for i, zone in enumerate(zones[:7]):
@@ -189,21 +191,29 @@ def calculate_zone_distribution_efficient(
             zone_min, zone_max = None, None
             if hasattr(zone, 'power_range') and zone.power_range:
                 zone_min, zone_max = zone.power_range
+                logger.debug(f"Zone {i+1}: power_range={zone_min}-{zone_max}")
             elif hasattr(zone, 'pace_range') and zone.pace_range:
                 zone_min, zone_max = zone.pace_range
+                logger.debug(f"Zone {i+1}: pace_range={zone_min}-{zone_max}")
             elif hasattr(zone, 'heart_rate_range') and zone.heart_rate_range:
                 zone_min, zone_max = zone.heart_rate_range
+                logger.debug(f"Zone {i+1}: hr_range={zone_min}-{zone_max}")
+            elif hasattr(zone, 'speed_range') and zone.speed_range:
+                # For temporary speed zones created from pace zones
+                zone_min, zone_max = zone.speed_range
+                logger.info(f"Zone {i+1}: speed_range={zone_min}-{zone_max} (converted from pace)")
 
             if zone_min is not None and zone_max is not None:
                 # Handle infinity values
                 if zone_max == float('inf'):
                     zone_max = 999999
-                
+
                 ranges.append({
                     "key": f"zone_{i+1}",
                     "from": zone_min,
                     "to": zone_max
                 })
+                logger.debug(f"Added range for zone_{i+1}: {zone_min}-{zone_max}")
 
         if not ranges:
             return distribution
@@ -281,10 +291,14 @@ def get_total_records_count(
         es_client = storage.es
         index_name = storage._get_index_name(DataType.RECORD)
 
+        logger.info(f"Counting records in index: {index_name}, field: {field_name}, user: {user_id}, dates: {start_date.isoformat()} to {end_date.isoformat()}")
+
         response = es_client.count(index=index_name, body=count_query)
         count = response.get("count", 0)
 
         logger.info(f"Records count for field {field_name}: {count}")
+        if count == 0:
+            logger.warning(f"Zero records found for field {field_name} - this may indicate a data issue")
         return count
 
     except Exception as e:

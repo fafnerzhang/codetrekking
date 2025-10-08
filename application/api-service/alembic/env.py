@@ -8,22 +8,17 @@ from sqlalchemy import pool
 from alembic import context
 
 # Add the src directory to the path so we can import our models
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+src_path = os.path.join(os.path.dirname(__file__), "..", "src")
+sys.path.insert(0, src_path)
 
 # Import all models to ensure they're registered with SQLModel
 from sqlmodel import SQLModel
 
-# Import all models to register them with SQLModel metadata
-from database.models import (  # noqa: F401
-    User, 
-    Role, 
-    Permission, 
-    UserSession, 
-    AuditLog, 
-    UserGarminCredentials,
-    UserRoleLink,
-    RolePermissionLink
-)
+# Import models directly to avoid circular imports with database/__init__.py
+import importlib.util
+spec = importlib.util.spec_from_file_location("models", os.path.join(src_path, "database", "models.py"))
+models = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(models)  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

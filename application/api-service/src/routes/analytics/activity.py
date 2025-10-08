@@ -284,6 +284,8 @@ async def get_summary(
             logger.info(f"Skipping power zones - threshold: {thresholds['threshold_power']}, records: {power_records_count}")
 
         # Pace zones (convert speed field to pace ranges)
+        logger.info(f"Pace zone check: threshold_pace={thresholds.get('threshold_pace')}, speed_records={speed_records_count}")
+
         if thresholds["threshold_pace"] and speed_records_count > 0:
             try:
                 # Convert threshold_pace from min/km to sec/km for the pace analyzer
@@ -295,6 +297,8 @@ async def get_summary(
                     threshold_pace_sec_km
                 )
                 logger.info(f"Calculated {len(pace_zones)} pace zones")
+                if not pace_zones:
+                    logger.warning("❌ Pace zone calculator returned empty list!")
                 # Convert pace zones to speed ranges for querying
                 for zone in pace_zones:
                     if hasattr(zone, 'pace_range'):
@@ -314,10 +318,14 @@ async def get_summary(
                             speed_max = float('inf')
 
                         zone.speed_range = (speed_min, speed_max)
-                        logger.debug(f"Zone {zone.zone_number}: pace {pace_min:.1f}-{pace_max:.1f} sec/km -> speed {speed_min:.2f}-{speed_max:.2f} m/s")
+                        pace_max_display = f"{pace_max:.1f}" if pace_max != float('inf') else 'INF'
+                        speed_max_display = f"{speed_max:.2f}" if speed_max != float('inf') else 'INF'
+                        logger.info(f"Zone {zone.zone_number} ({zone.zone_name}): pace {pace_min:.1f}-{pace_max_display} sec/km -> speed {speed_min:.2f}-{speed_max_display} m/s")
             except Exception as e:
-                logger.warning(f"Pace zone calculation failed: {e}")
+                logger.error(f"❌ Pace zone calculation failed: {e}", exc_info=True)
                 pace_zones = []
+        else:
+            logger.warning(f"❌ Skipping pace zone calculation - threshold_pace: {thresholds.get('threshold_pace')}, speed_records: {speed_records_count}")
 
         # Heart rate zones
         if thresholds["max_heart_rate"] and hr_records_count > 0:
@@ -345,15 +353,20 @@ async def get_summary(
                 for zone in pace_zones:
                     if hasattr(zone, 'speed_range'):
                         speed_min, speed_max = zone.speed_range
-                        # Skip zones with infinite or invalid ranges
+
+                        # Handle infinity values - convert to large number for Elasticsearch
+                        if speed_max == float('inf'):
+                            speed_max = 999999  # Very high speed (unlikely to be reached)
+
+                        # Skip only truly invalid ranges
                         if (speed_min is not None and speed_max is not None and
-                            speed_min != float('inf') and speed_max != float('inf') and
-                            speed_min < speed_max and speed_max > 0):
+                            speed_min >= 0 and speed_max > speed_min):
 
                             speed_zone = type('SpeedZone', (), {
                                 'speed_range': (speed_min, speed_max)
                             })()
                             speed_zones.append(speed_zone)
+                            logger.debug(f"Created speed zone {zone.zone_number}: {speed_min:.2f} - {speed_max:.2f} m/s")
 
                 logger.info(f"Created {len(speed_zones)} speed zones for pace aggregation")
 
